@@ -1,0 +1,637 @@
+/* =========================================
+   points_list.html 専用 CSS
+   テーマ: Cosmic Midnight + Globe Hero 7:3
+   概要:
+   - ページ全体の暗色宇宙テーマ
+   - ファーストビュー: 左=Globe / 右=ポイント一覧 (7:3)
+   - PC: 左右同じ高さ / SP: 上下配置、一覧は固定高スクロール
+   - 右ペインのグラフは全面オーバーレイ (#graph-panel)
+   ========================================= */
+
+/* -----------------------------------------
+   [Tokens / 設定値]
+   色/影/角丸/高さなどのデザイントークン
+   ----------------------------------------- */
+:root{
+  --wrap: 1200px;
+  --gap: 16px;
+
+  /* Space base */
+  --bg-deep: #0B1020;
+  --bg-grad: linear-gradient(180deg, #0B1020 0%, #060A14 60%, #04070F 100%);
+
+  /* Surfaces */
+  --surface-1: #0F172A;     /* パネル濃 */
+  --surface-2: #111827;     /* カード明 */
+  --glass: rgba(15, 23, 42, .55); /* ガラス調 */
+
+  /* Ink */
+  --ink: #E8EEF6;
+  --ink-sub: #9BA7BD;
+
+  /* Lines & Shadow */
+  --line: #223049;
+  --line-strong: #395173;
+  --shadow: 0 12px 30px rgba(0,0,0,.45);
+
+  /* Accents */
+  --accent: #4FF1E5;
+  --accent-strong: #2AC6BB;
+  --plasma: #9A6CFF;
+
+  /* Etc */
+  --badge: rgba(79, 241, 229, .16);
+  --rad: 12px;
+
+  /* 高さ系（ヒーローとMap） */
+  --panel-h: clamp(520px, 68vh, 860px);
+  --globe-h-pc: clamp(760px, 92dvh, 1120px);     /* PCのGlobe面高さ（一覧もこれに揃える） */
+  --globe-h-sp: 72dvh;   /* SPのGlobe面高さ */
+  --hero-list-h-sp: clamp(360px, 68dvh, 760px); /* SPの一覧固定高 */
+
+  /* モーション */
+  --fade-ms: 220ms;
+}
+
+/* -----------------------------------------
+   [Base / Reset]
+   ページの土台（背景レイヤー含む）
+   ----------------------------------------- */
+*{ box-sizing: border-box }
+html,body{
+  margin:0; padding:0;
+  background: var(--bg-deep);
+  color: var(--ink);
+  font-family: "Noto Sans JP", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.6;
+  position: relative;
+  min-height: 100%;
+}
+img{ max-width:100%; height:auto; display:block; }
+[hidden]{ display:none !important; }
+.page-wrap{ max-width: var(--wrap); margin: 0 auto; padding: 0 20px 24px }
+
+/* 宇宙背景レイヤー（星/ネビュラ） */
+body::before,
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:-2;
+}
+body::before{
+  background:
+    radial-gradient(1px 1px at 12% 18%, rgba(255,255,255,.20), transparent 60%),
+    radial-gradient(1px 1px at 78% 12%, rgba(255,255,255,.16), transparent 60%),
+    radial-gradient(1px 1px at 26% 72%, rgba(255,255,255,.14), transparent 60%),
+    radial-gradient(1px 1px at 62% 44%, rgba(255,255,255,.10), transparent 60%),
+    radial-gradient(1px 1px at 88% 66%, rgba(255,255,255,.12), transparent 60%),
+    var(--bg-grad);
+  background-attachment: fixed;
+  filter: saturate(105%);
+}
+body::after{
+  background:
+    radial-gradient(60vw 60vw at 20% 10%, rgba(154,108,255,.10), transparent 60%),
+    radial-gradient(70vw 70vw at 80% 25%, rgba(77,232,252,.08), transparent 60%),
+    radial-gradient(80vw 50vw at 50% 85%, rgba(79,241,229,.06), transparent 70%);
+  mix-blend-mode: screen;
+  z-index:-1;
+}
+
+/* -----------------------------------------
+   [Header]
+   ロゴ / タイトル / グローバル検索
+   ----------------------------------------- */
+.page-head{
+  display:flex; justify-content:space-between; align-items:center; gap:12px;
+  padding: 12px 16px; margin: 14px 0 16px;
+  background: linear-gradient(180deg, #121c34 0%, #0c1428 100%);
+  border-radius: 12px;
+  box-shadow: 0 10px 26px rgba(0,0,0,.38);
+  position: relative;
+}
+.page-head::after{
+  content:""; position:absolute; left:12px; right:12px; bottom:-1px; height:1px;
+  background: linear-gradient(90deg, transparent, rgba(79,241,229,.7), transparent);
+  filter: drop-shadow(0 0 3px rgba(79,241,229,.35));
+}
+.page-head a{ display:inline-flex; align-items:center }
+.brand-logo img{ height:40px; width:auto; }
+.point-name{
+  color:#EAFBFF; font-weight:800; letter-spacing:.02em;
+  text-shadow: 0 0 10px rgba(79,241,229,.25);
+}
+
+/* グローバル検索（テキスト+アイコン+サジェスト） */
+.head-search{ flex: 1 1 520px; max-width: 560px; margin: 0 8px; position: relative; display:flex; }
+.head-input{
+  width:100%; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(79,241,229,.25);
+  background: linear-gradient(180deg, rgba(17,24,39,.75), rgba(17,24,39,.55));
+  color: #EAF7FB; box-shadow: 0 6px 16px rgba(0,0,0,.35), 0 0 0 1px rgba(79,241,229,.08) inset;
+  outline: none; padding-right: 40px; /* 右端アイコン分 */
+}
+.head-input::placeholder{ color:#9FB0C6 }
+.head-input:focus{
+  border-color: rgba(79,241,229,.55);
+  box-shadow: 0 8px 18px rgba(0,0,0,.45), 0 0 0 3px rgba(79,241,229,.18);
+}
+.head-btn{
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 36px; height: 36px; display: grid; place-items: center;
+  background: transparent; border: 0; box-shadow: none; color: #EAF7FB; cursor: pointer;
+}
+.head-btn svg{ width: 18px; height: 18px; fill: currentColor; }
+.head-btn:hover{ color: #BDF9F4; }
+.head-btn:active{ transform: translateY(-50%) scale(.96); }
+.head-btn:focus-visible{ outline: 2px solid rgba(79,241,229,.45); outline-offset: 2px; border-radius: 8px; }
+
+.head-suggest{
+  position:absolute; left:0; right:0; top: calc(100% + 6px);
+  background: linear-gradient(180deg, rgba(17,24,39,.9), rgba(17,24,39,.78));
+  border: 1px solid rgba(79,241,229,.22);
+  border-radius: 10px; box-shadow: 0 14px 28px rgba(0,0,0,.45);
+  padding: 6px; z-index: 30; max-height: 56vh; overflow:auto;
+}
+.sug-item{ display:flex; align-items:center; gap:10px; padding: 8px 10px; border-radius: 8px; cursor:pointer; }
+.sug-item:hover, .sug-item.is-active{ background: rgba(79,241,229,.10); }
+.sug-flag{ width:22px; height:22px; border-radius:50%; overflow:hidden; flex:0 0 auto; }
+.sug-flag > span.flag-icon{ font-size:16px; display:block; }
+.sug-label{ font-weight:700; color:#EAF2FF; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sug-type{ font-size:11px; color:#CFEFF1; padding:2px 6px; border-radius:999px; border:1px solid rgba(79,241,229,.22); margin-left:auto; }
+
+@media (max-width: 720px){
+  .page-head{ flex-wrap: wrap; gap:10px; }
+  .head-search{ order: 3; flex: 1 0 100%; max-width: none; }
+}
+
+/* -----------------------------------------
+   [Banner]
+   アイキャッチなど任意のバナー
+   ----------------------------------------- */
+.banner-box{ margin: 8px 0 16px }
+.banner-box img{
+  width:100%; max-height:220px; object-fit:cover;
+  border-radius: var(--rad);
+  border: 1px solid rgba(79,241,229,.22);
+  box-shadow: 0 10px 26px rgba(0,0,0,.35);
+}
+
+/* -----------------------------------------
+   [Pane]
+   白/ガラスカードの共通箱
+   ----------------------------------------- */
+.pane{
+  background: linear-gradient(180deg, rgba(17,24,39,.72), rgba(17,24,39,.58));
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: var(--rad);
+  box-shadow: var(--shadow);
+  padding: 12px 12px 14px;
+  margin-bottom: 12px;
+}
+.box-title{
+  margin:0 0 10px; font-size: 15px; font-weight: 800; letter-spacing:.02em; color:#EAF2FF;
+}
+
+/* =========================================
+   [Hero 2カラム: Globe(左) 7 / List(右) 3]
+   - PC: 左右同じ高さ var(--globe-h-pc)
+   - SP: 縦積み、一覧は固定高 var(--hero-list-h-sp, 42vh)
+   - HTMLは #hero-2col でも .globe-hero でもOK
+   ========================================= */
+
+/* --- コンテナ（両方の名前に対応） --- */
+#hero-2col,
+.globe-hero{
+  display: grid;
+  gap: 20px;
+  margin: 12px 0 16px;
+}
+
+/* --- PC: 7:3 + 同高さ --- */
+@media (min-width: 992px){
+  #hero-2col,
+  .globe-hero{
+    grid-template-columns: 7fr 3fr;   /* ← 7:3 */
+    align-items: stretch;             /* ← 高さを揃える */
+  }
+  /* 左右の高さを揃える（どちらの命名にも対応） */
+  #hero-2col .hero-left,
+  #hero-2col .hero-right,
+  .globe-hero .globe-side,
+  .globe-hero .hero-list{
+    height: var(--globe-h-pc);
+    min-height: var(--globe-h-pc);
+  }
+}
+
+/* --- SP: 1カラム + 一覧は固定高スクロール --- */
+@media (max-width: 991.98px){
+  #hero-2col,
+  .globe-hero{ grid-template-columns: 1fr; }
+
+  /* 左=Globeの高さ（SP） */
+  .globe-side,         /* 旧命名 */
+  #hero-2col .hero-left{
+    height: var(--globe-h-sp);
+  }
+
+  /* 右=一覧の高さ（SP固定高）。未定義なら 42vh を既定に */
+  .hero-list,
+  #hero-2col .hero-right{
+    height: var(--hero-list-h-sp, 42vh);
+  }
+}
+
+/* =========================================
+   [Globe枠 / キャンバス / ヒント]
+   ========================================= */
+.globe-wrap{ background: transparent; border: none; box-shadow: none; padding: 0; margin: 0 0 18px 0; opacity: 1; transition: opacity var(--fade-ms) ease, visibility var(--fade-ms) ease; }
+.globe-wrap.is-hidden{ opacity:0; visibility:hidden; }
+
+.globe-canvas{
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 400px;           /* “見えない”対策：最低高を確保 */
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+}
+.globe-canvas > canvas{
+  position:absolute; inset:0; display:block;
+  width:100% !important;
+  height:100% !important;
+  opacity:1 !important;
+}
+
+/* --- 国旗ピン（Globeの htmlElementsData） --- */
+.globe-flag{
+  width: 34px; height: 24px; border-radius: 6px; overflow: hidden;
+  border: 1px solid rgba(0,0,0,.2);
+  box-shadow: 0 4px 10px rgba(0,0,0,.28), 0 0 10px rgba(79,241,229,.18);
+  background: #0b0f1a;
+  transform: translateZ(0);
+  will-change: transform, box-shadow;
+  pointer-events: auto;
+}
+.globe-flag img{ width:100%; height:100%; object-fit: cover; display:block; }
+.globe-flag:hover{
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 8px 16px rgba(0,0,0,.35), 0 0 12px rgba(79,241,229,.25);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+
+/* =========================================
+   [メイン2カラム：左=Globe/Map / 右=一覧 共通レイアウト]
+   ========================================= */
+.view-2col{ display:grid; gap:20px; margin:12px 0 16px; }
+@media (min-width:992px){
+  .view-2col{ grid-template-columns:7fr 3fr; align-items:stretch; }
+}
+@media (max-width:991.98px){
+  .view-2col{ grid-template-columns:1fr; }
+}
+
+/* 左ペイン（Globe/Mapを重ねる土台） */
+.left-switch{
+  position:relative;
+  height:var(--globe-h-pc);
+  min-height:400px;
+  border-radius:var(--rad);
+  overflow:hidden;
+}
+@media (max-width:991.98px){
+  .left-switch{ height:var(--globe-h-sp); }
+}
+
+/* 左ペイン：Globe / Map の重ね表示 + 前面制御 */
+#globe,
+#map{
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: var(--rad);
+  z-index: 1;                    /* 基本は下層 */
+}
+#globe:not(.is-hidden){ z-index: 2; }
+#map:not(.is-hidden){   z-index: 2; }
+
+/* Map の外観 */
+#map{
+  background:#0f1626;
+  border:1px solid rgba(34,48,73,.8);
+  box-shadow:0 10px 26px rgba(0,0,0,.45);
+  overflow:hidden;
+}
+
+/* フェード + クリック無効 */
+.is-hidden{
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity var(--fade-ms) ease, visibility var(--fade-ms) ease;
+}
+
+/* three-globe の実Canvasを全面フィット（保険） */
+#globe{ min-height:400px; }
+#globe > canvas{ position:absolute; inset:0; width:100% !important; height:100% !important; display:block; }
+
+/* Globe上のラベル（再掲） */
+.globe-flag{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:2px 6px; border-radius:12px;
+  background: rgba(11,20,36,.55);
+  border: 1px solid rgba(255,255,255,.08);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 10px rgba(0,0,0,.35);
+  color:#e6f0ff; white-space:nowrap; pointer-events:auto;
+  transform: translateZ(0);
+}
+.globe-flag img{ display:block; border-radius:3px; }
+.globe-flag-label{ font-size:12px; font-weight:700; letter-spacing:.2px; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+
+/* =========================================
+   [左ペイン オーバーレイ：地域ラベル & 「Globeに戻る」]
+   - Map時のみ表示
+   - :has() と .map-mode の両方に対応
+   ========================================= */
+.viewbar{
+  position:absolute; left:12px; right:12px; top:10px;
+  z-index: 2000;  /* キャンバスより前面 */
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  pointer-events:none;           /* ラッパは受けず子だけ受ける */
+}
+.viewbar .map-region-label,
+.viewbar .back-pill{ pointer-events:auto; }
+
+.map-region-label{
+  font-size:13px; color:#CFEFF1;
+  background:linear-gradient(180deg,rgba(17,24,39,.8),rgba(17,24,39,.6));
+  border:1px solid var(--line); border-radius:999px; padding:4px 10px;
+  box-shadow:0 4px 12px rgba(0,0,0,.35);
+}
+
+/* 戻るピル：既定は非表示、Map時のみ表示 */
+.back-pill{
+  display:none;
+  align-items:center; gap:8px;
+  padding:8px 12px; border-radius:999px;
+  background:linear-gradient(180deg,rgba(17,24,39,.85),rgba(17,24,39,.65));
+  color:#EAF7FB; border:1px solid var(--line);
+  box-shadow:0 6px 16px rgba(0,0,0,.45), 0 0 0 1px rgba(79,241,229,.10) inset;
+  cursor:pointer;
+}
+.back-pill:hover{
+  background:linear-gradient(180deg,rgba(17,24,39,.95),rgba(17,24,39,.75));
+  border-color:var(--line-strong);
+}
+
+/* :has() が使えるブラウザ */
+.left-switch:has(#map:not(.is-hidden)) .back-pill{ display:inline-flex; }
+.left-switch:not(:has(#map:not(.is-hidden))) .map-region-label{ display:none; }
+
+/* フォールバック：JSで .left-switch に .map-mode を付与 */
+.left-switch.map-mode .back-pill{ display:inline-flex; }
+.left-switch:not(.map-mode) .map-region-label{ display:none; }
+
+/* =========================================
+   [Globeヒント（左下）] — Map時は自動で隠す
+   ========================================= */
+.globe-hint{
+  position:absolute; left:14px; bottom:12px; z-index:1500;
+  font-size:12px; color:var(--ink-sub);
+  background:linear-gradient(180deg,rgba(15,23,42,.85),rgba(15,23,42,.65));
+  backdrop-filter:blur(6px);
+  border:1px solid var(--line); border-radius:999px;
+  padding:6px 10px; box-shadow:0 8px 18px rgba(0,0,0,.45), 0 0 0 1px rgba(79,241,229,.10) inset;
+  pointer-events:none;
+}
+.left-switch:has(#map:not(.is-hidden)) .globe-hint{ display:none; }
+.left-switch.map-mode .globe-hint{ display:none; }  /* フォールバック */
+
+/* =========================================
+   [右側：ポイント一覧（常時表示・同じ高さ）]
+   - 左ペインと同じ高さに合わせ、中身だけスクロール
+   ========================================= */
+.right-list{
+  height: var(--globe-h-pc);
+  display:flex; flex-direction:column;
+}
+.right-list .pane{
+  height:100%;
+  display:flex; flex-direction:column;
+  position: relative;            /* ★ Graphパネルのアンカーにする */
+}
+.right-list .results,
+#results{
+  flex:1 1 auto; min-height:0; overflow:auto; padding-right:4px;
+}
+@media (max-width: 991.98px){
+  .right-list{ height: var(--hero-list-h-sp, 42vh); }
+}
+.right-list .results::-webkit-scrollbar,
+#results::-webkit-scrollbar{ width:10px; }
+.right-list .results::-webkit-scrollbar-thumb,
+#results::-webkit-scrollbar-thumb{ background: rgba(79,241,229,.25); border-radius:999px; }
+
+/* 「地図で見る」見出しは非表示（A11y維持なら sr-only でもOK） */
+#ttl-map-view,
+.map-viewbar h2{ 
+  position: absolute !important;
+  width:1px; height:1px; margin:-1px; padding:0; border:0;
+  overflow:hidden; clip: rect(0 0 0 0); white-space:nowrap;
+}
+
+/* =========================================
+   [検索結果カード：共通（右ペイン）]
+   ========================================= */
+.result-item{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:var(--rad);
+  padding:12px; display:flex; align-items:center; gap:10px; cursor:pointer;
+  box-shadow:0 6px 16px rgba(0,0,0,.35);
+  transition:transform .15s, box-shadow .15s, border-color .15s;
+}
+.result-item:hover{
+  transform:translateY(-2px);
+  box-shadow:0 12px 24px rgba(0,0,0,.45), 0 0 0 6px var(--badge);
+  border-color:var(--line-strong);
+}
+.result-item .name{
+  font-weight:700; color:#F1F7FF; letter-spacing:.01em;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+/* =========================================
+   [Graph Overlay：右ペイン全面オーバーレイ]
+   - #graph-panel が .right-list .pane を全面で覆う
+   - 開いている間は下の一覧を操作不可に
+   ========================================= */
+#graph-panel{
+  position:absolute;
+  inset:0;                        /* 右ペイン（.right-list .pane）全面 */
+  z-index:30;
+
+  /* 完全に非表示（初期状態） */
+  display:none;
+  /* hidden 属性が付いたときの保険 */
+  /* ※ JSで panel.hidden=true を付けるので、こちらも効く */
+}
+#graph-panel.is-open{
+  display:grid;                   /* 開いたときだけ描画 */
+  grid-template-rows:auto 1fr;
+
+  /* 見た目（必要ならお好みで調整） */
+  background: rgba(11,20,36,.96);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: var(--rad);
+  box-shadow: 0 12px 32px rgba(0,0,0,.45);
+}
+
+/* パネル開時：下地のスクロール/操作を抑止（従来どおり） */
+.right-list .pane:has(#graph-panel.is-open) #results{ overflow:hidden; }
+.right-list .pane:has(#graph-panel.is-open) .result-item{ pointer-events:none; }
+.right-list .pane:has(#graph-panel.is-open) > .box-title{ visibility:hidden; }
+
+/* JSフォールバック（.panel-open を付ける場合） */
+.right-list .pane.panel-open #results{ overflow:hidden; }
+.right-list .pane.panel-open .result-item{ pointer-events:none; }
+.right-list .pane.panel-open > .box-title{ visibility:hidden; }
+
+/* パネル内レイアウト（既存のままでOK。必要なら残して） */
+.gp-head{
+  display:flex; align-items:center; gap:12px;
+  padding:12px 14px;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+}
+.gp-title{ font-weight:700; font-size:16px; color:#e6f0ff; }
+.gp-tabs{ display:flex; gap:8px; margin-left:auto; }
+.gp-tab{
+  appearance:none; border:0; cursor:pointer;
+  padding:6px 10px; border-radius:10px;
+  background: rgba(255,255,255,.10); color:#e6f0ff; font-weight:600;
+}
+.gp-tab.is-active{ background:#2a7fff; color:#fff; }
+.gp-close{
+  margin-left:8px;
+  appearance:none; border:0; cursor:pointer;
+  width:32px; height:32px; border-radius:10px;
+  background: rgba(255,255,255,.12);
+  color:#fff; font-size:18px; line-height:32px; text-align:center;
+}
+.gp-body{ overflow:hidden; }
+.gp-view{ display:none; width:100%; height:100%; }
+.gp-view.is-active{ display:block; }
+#graph-frame{ width:100%; height:100%; border:0; display:block; }
+#guide-body{ padding:14px; line-height:1.7; color:#e6f0ff; white-space:pre-wrap; }
+
+/* -----------------------------------------
+   [Leaflet 調整（暗色UI）]
+   著作表記/ツールチップ/クラスタ等
+   ----------------------------------------- */
+.leaflet-container{ background: #0c1322 }
+.leaflet-control-attribution{
+  background: rgba(17,24,39,.85);
+  color: #9FB0C6;
+  border-radius: 8px; padding: 2px 6px; border: 1px solid var(--line);
+}
+.leaflet-control-attribution a{ color: #CFEFF1 }
+.leaflet-tooltip.marker-tooltip{
+  background:#0e2236; color:#e9f6ff;
+  border:1px solid #2a4b6e; border-radius:8px; padding:6px 8px; font-size:12px;
+  box-shadow:0 6px 18px rgba(0,0,0,.45);
+  pointer-events: none;          /* クリック邪魔しない */
+  transform: translateY(-2px);   /* ほんの少し上げる */
+}
+.leaflet-tooltip.marker-tooltip:before{ display:none; }
+
+/* クラスターバッジ（layers.js 依存） */
+.cl-wrap{ background: transparent !important; border:none !important; }
+.cl-badge{
+  display:grid; place-items:center;
+  background: radial-gradient(120% 120% at 30% 30%, #2b82a0, #1c3b58);
+  color:#eaffff;
+  border: 2px solid rgba(255,255,255,.85);
+  border-radius: 999px; width: 40px; height: 40px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.5), 0 0 16px rgba(79,241,229,.25);
+  font-weight: 800;
+}
+.cl-badge.sm{ width:34px; height:34px }
+.cl-badge.md{ width:40px; height:40px }
+.cl-badge.lg{ width:48px; height:48px }
+
+/* Map側の旗ピン */
+.flag-pin{ background: transparent !important }
+.flag-badge{
+  display:inline-grid; place-items:center;
+  background:#0b0f1a; border:1px solid var(--line);
+  width:34px; height:34px; border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.45), 0 0 10px rgba(79,241,229,.20);
+}
+
+/* -----------------------------------------
+   [Controls / Buttons]
+   汎用コントロールの見た目
+   ----------------------------------------- */
+.ctrl-btn{
+  background: linear-gradient(180deg, rgba(17,24,39,.85), rgba(17,24,39,.65));
+  color:#EAF7FB;
+  border:1px solid var(--line);
+  border-radius:10px; padding:8px 10px;
+  box-shadow: 0 6px 16px rgba(0,0,0,.45), 0 0 0 1px rgba(79,241,229,.10) inset;
+  cursor:pointer;
+}
+.ctrl-btn:hover{
+  background: linear-gradient(180deg, rgba(17,24,39,.95), rgba(17,24,39,.75));
+  border-color: var(--line-strong);
+  box-shadow: 0 10px 22px rgba(0,0,0,.55), 0 0 0 6px var(--badge);
+}
+.ctrl-btn:focus-visible{ outline: 3px solid rgba(79,241,229,.35); outline-offset: 2px; }
+.scale-pill{
+  position:absolute; right:12px; top:56px; display:none;
+  background: linear-gradient(180deg, rgba(17,24,39,.85), rgba(17,24,39,.65));
+  padding:6px 10px; border-radius:999px;
+  border:1px solid var(--line); color:#CFEFF1;
+  box-shadow: 0 6px 16px rgba(0,0,0,.45);
+}
+
+/* -----------------------------------------
+   [Utilities]
+   汎用ユーティリティ / モーション
+   ----------------------------------------- */
+.is-hidden{ display:none !important; }
+.fade-in{ animation: fadeIn var(--fade-ms) ease both; }
+.fade-out{ animation: fadeOut var(--fade-ms) ease both; }
+@keyframes fadeIn{ from{ opacity:0 } to{ opacity:1 } }
+@keyframes fadeOut{ from{ opacity:1 } to{ opacity:0 } }
+@media (prefers-reduced-motion: reduce){
+  .globe-wrap, .map-wrap{ transition: none !important; }
+  .fade-in, .fade-out{ animation: none !important; }
+}
+
+/* -----------------------------------------
+   [“見えない”対策]
+   背景の積層/キャンバスのサイズ問題の保険
+   ----------------------------------------- */
+.page-wrap{ position: relative; z-index: 0; }
+.globe-wrap, .globe-canvas{ isolation: isolate; }
+
+/* -----------------------------------------
+   [Surflineチャート]（別ページ用の保険）
+   ----------------------------------------- */
+.surfline-pane{ padding-bottom: 16px }
+#surfline-chart{
+  width:100%; height: clamp(520px, 68vh, 860px);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--rad);
+  box-shadow: var(--shadow), 0 0 0 1px rgba(79,241,229,.08) inset;
+  overflow: hidden;
+}
+.chart-iframe{ width:100%; height:100%; border:0; display:block; border-radius:0; background:#0c1322; }
+
+/* -----------------------------------------
+   [AdSense Placeholder]
+   スロットのみ確保
+   ----------------------------------------- */
+.adsense-box{ margin-top: 12px; min-height: 120px }

@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>海外ポイント一覧</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- 依存ライブラリ（Leaflet / Cluster / Flags） -->
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/css/flag-icon.min.css">
+
+  <!-- Globe用（three.js + globe.gl） -->
+  <script defer src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script defer src="https://unpkg.com/globe.gl@^2.32.0/dist/globe.gl.min.js"></script>
+
+  <!-- サイトCSS（base統合後のlist.cssを使用） -->
+  <link rel="stylesheet" href="css/list.css">
+
+  <!-- Leaflet本体（グローバル） -->
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+</head>
+
+<body>
+  <div class="page-wrap">
+
+    <!-- ========== ヘッダー ========== -->
+    <header class="page-head" aria-label="ページヘッダー">
+      <div class="brand-logo">
+        <a href="/" aria-label="ホーム">
+          <img src="img/white.svg" alt="サイトロゴ" height="28">
+        </a>
+      </div>
+
+      <!-- ▼ グローバル検索（国 / ポイント名） -->
+      <form id="global-search" class="head-search" role="search" autocomplete="off">
+        <input id="global-q" class="head-input" type="search"
+              placeholder="国・ポイント名で検索"
+              aria-label="国・ポイント名で検索"
+              aria-controls="search-suggest"
+              enterkeyhint="search" />
+        <!-- 送信ボタン（モバイル向けにも見える） -->
+        <button type="submit" class="head-btn" aria-label="検索">
+          <!-- シンプルなルーペアイコン（SVG） -->
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.71.71l.27.28v.79L20 21.5 21.5 20l-6-6zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/>
+          </svg>
+        </button>
+
+        <div id="search-suggest" class="head-suggest" role="listbox" hidden></div>
+      </form>
+
+
+      <div class="point-name">海外ポイント一覧</div>
+    </header>
+
+    <!-- ========== 広告バナー（任意） ========== -->
+    <section class="banner-box" aria-label="広告バナー">
+      <!-- 例：
+      <a href="#" target="_blank" rel="noopener">
+        <img src="img/banner_sample.jpg" alt="バナー" loading="lazy" decoding="async">
+      </a>
+      -->
+    </section>
+
+    <!-- =============================
+         ① Globeビュー（初期表示）
+       ============================= -->
+    <!-- ① Globeビュー（初期表示） -->
+<!-- ① Globeビュー（7:3：左Globe / 右リスト） -->
+<!-- === メイン2カラム：左=Globe/Map 切替、右=共通ポイント一覧 === -->
+<!-- ===== ヒーロー 2カラム（左：Globe/Map切替 / 右：一覧 常時表示） ===== -->
+<section id="hero-2col" class="globe-hero" aria-label="世界マップとポイント一覧">
+  <!-- 左：Globe/Map を同じ位置に重ねる（CSSで z-index 切替） -->
+  <div class="hero-left left-switch" id="left-switch">
+    <!-- Globe（初期表示） -->
+    <div id="globe" class="globe-canvas" aria-label="3D地球儀キャンバス"></div>
+
+    <!-- Map（初期は非表示。JSで .is-hidden を外して前面化） -->
+    <div id="map" class="is-hidden" role="application" aria-label="サーフポイント地図"></div>
+
+    <!-- 左ペインのオーバーレイ（Map時のみ「Globeに戻る」を表示） -->
+    <div class="viewbar" aria-hidden="false">
+      <span id="map-region-label" class="map-region-label" aria-live="polite"></span>
+      <button type="button" id="back-to-globe-btn" class="back-pill">🌍 Globeに戻る</button>
+    </div>
+
+    <!-- Globeヒント（Globe時のみ表示） -->
+    <div class="globe-hint" aria-hidden="true">
+      ドラッグで回転・ピンチ/ホイールでズーム・国旗クリックで地図へ
+    </div>
+  </div>
+
+  <!-- 右：ポイント一覧（常時同じUI。結果だけJSで差し替え） -->
+  <aside class="hero-right right-list pane" aria-labelledby="ttl-points">
+    <h2 class="box-title" id="ttl-points">ポイント一覧</h2>
+    <div id="results" class="results" aria-live="polite"></div>
+  </aside>
+</section>
+
+
+
+
+
+    <!-- ========== Surflineチャート（現状維持／必要なら後で調整） ========== -->
+    <section class="pane surfline-pane" aria-labelledby="ttl-surfline">
+      <div id="surfline-chart">
+        <iframe
+          class="chart-iframe"
+          src="https://www.surfline.com/embed/surf-charts/Ishikawa/58581a836630e24c448790fe/@28.293,140.120,3.47z?type=wave-height&client_id=6123ef4f5192b46d74d575a6&days=16"
+          allowfullscreen
+        ></iframe>
+      </div>
+    </section>
+
+    <!-- ========== アドセンス枠（箱だけ用意） ========== -->
+    <section class="adsense-box" id="adsense" aria-label="広告枠">
+      <!-- 後で AdSense タグを挿入 -->
+    </section>
+
+  </div><!-- /.page-wrap -->
+
+  <!-- アプリJS（points_list 用）
+       ※ 二重ロード防止のため list.js のみ直読み（内部で map/layers を使う想定） -->
+  <script type="module" src="js/list.js"></script>
+</body>
+</html>

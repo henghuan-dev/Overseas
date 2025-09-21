@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 内部キャンバスを1000pxで固定 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>波情報グラフ（iframe用）</title>
+
+  <!-- ★ このページ専用の最小CSS（横幅1000px固定） -->
+  <style>
+    :root{
+      --maxw: 1000px;      /* 全体の最大幅 */
+      --pad:  16px;        /* 左右パディング */
+      --hour-w: clamp(26px, 10vw, 50px); /* 1時間のセル幅（端末に応じて可変） */
+
+      /* タイトル幅 & 行の高さ（可変） */
+      --title-w: clamp(110px, 22vw, 150px);
+      --track-h: clamp(50px, 8vw, 70px);
+      --waveTide-h: clamp(140px, 24vw, 180px);
+      --tideLine-h: clamp(100px, 20vw, 140px);
+    }
+    *{ box-sizing: border-box; }
+    html,body{ margin:0; padding:0; }
+    body{
+      background:#fff;
+      color:#333;
+      font-family: "Helvetica Neue", Arial, "Noto Sans JP", sans-serif;
+      max-width: var(--maxw);
+      width: 100%;
+      margin: 0 auto;
+      padding: 0 var(--pad);
+      overflow-x:hidden;   /* 横はみ出し防止 */
+    }
+
+    /* ====== ベース ====== */
+.chart-block {
+  position: relative;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+}
+
+.chart-scroll-container {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+  padding-bottom: 10px;
+  position: relative;
+}
+
+.chart-inner {
+  display: block;
+  position: relative;
+}
+
+/* overlayCanvas */
+#overlayCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: auto;
+  z-index: 10;
+}
+/* 折れ線グラフ（スマホ対応） */
+@media (max-width: 768px) {
+  .tide-only .canvas-wrapper {
+    overflow: visible;        /* 線や円が切れないように */
+    position: relative;
+  }
+  #tideLineCanvas {
+    height: 160px !important; /* ← 数値はお好みで 120–180 */
+    display: block;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* グラフ領域が隠れないように */
+  .chart-scroll-container {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+}
+
+
+/* ====== 共通ブロック ====== */
+.forecast-block {
+  background: transparent;
+  padding: 6px 0;
+  position: relative;
+  background: linear-gradient(to bottom, #e5f6ff, #f0fbf9);
+}
+
+.block-title {
+  font-size: 13px;
+  font-weight: bold;
+  margin-bottom: 4px;
+  color: #333;
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  width: 140px; /* 固定幅を設定 */
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+
+.canvas-wrapper {
+  overflow: hidden;
+}
+
+.forecast-block canvas {
+  display: block;
+  height: 60px;
+}
+
+/* ====== タイムライン ====== */
+/* タイムライン上の Today ピル */
+.timeline-header{
+  position: absolute;     /* ← 必須 */
+  left: 8px;
+  right: auto;            /* ← 念のため right を無効化 */
+  max-width: calc(100% - 16px); /* 端末幅から左右余白を差し引く */
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+
+  /* 既存の黒半透明デザイン */
+  background: rgba(0,0,0,0.3);
+  color: #fff;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  pointer-events: none;
+}
+
+@media (max-width: 768px){
+  .timeline-header{
+    font-size: 14px;
+    padding: 2px 8px;
+  }
+}
+.time-axis {
+  display: flex;
+  overflow-x: auto;
+  border-radius: 6px;
+  margin: 12px 0;
+  border: 1px solid rgba(0,0,0,0.05);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.time-axis::-webkit-scrollbar {
+  display: none;
+}
+
+.time-labels {
+  display: flex;
+  min-width: max-content;
+  width: calc(50px * 24); /* 24時間分のラベルに対応 */
+}
+
+.time-labels div {
+  flex: 0 0 50px;
+  width: 50px;
+  text-align: center;
+  font-size: 10px;
+  padding: 6px 0;
+  transition: background 0.3s;
+  box-sizing: border-box;
+}
+
+/* 昼と夜の色分け */
+.time-labels div.day {
+  background: rgba(255, 215, 0, 0.12);
+  color: #444;
+}
+
+.time-labels div.night {
+  background: rgba(25, 25, 112, 0.12);
+  color: #222;
+}
+
+/* 現在時刻 */
+.time-labels .current {
+  background: rgba(0, 191, 255, 0.2);
+  font-weight: bold;
+  box-shadow: inset 0 -2px 0 #00bfff;
+}
+
+/* ====== Overlay（Surfline風） ====== */
+.overlay-highlight {
+  background-color: rgba(0, 191, 255, 0.15);
+}
+.overlay-line {
+  border-left: 2px solid rgba(0, 191, 255, 0.9);
+}
+
+/* ====== Tooltip ====== */
+#tooltip {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: none;
+  z-index: 20;
+  display: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  animation: fadeIn 0.15s ease-in-out;
+  max-width: 180px;
+}
+#tooltip strong {
+  display: block;
+  font-size: 15px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.2);
+  color: #2a7d9eff;
+}
+#tooltip span.label {
+  display: inline-block;
+  min-width: 50px;
+  font-weight: bold;
+  color: #ccc;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ====== 波高＋潮汐 ====== */
+.wave-tide canvas {
+  background: transparent;
+}
+.wave-tide .block-title {
+  color: #2a7d9eff;
+  border-left: 4px solid #2a7d9eff;
+  padding-left: 6px;
+}
+#waveValueCanvas {
+  height: 28px;   /* 数値の1行分だけ */
+  display: block;
+}
+
+#waveTideCanvas {
+  height: 150px;  /* 棒＋潮汐の描画エリア */
+  display: block;
+}
+/* 潮汐（折れ線のみ） */
+.tide-only canvas { background: transparent; }
+.tide-only .block-title {
+  color: #2a7d9e;
+  border-left: 4px solid #2a7d9e;
+  padding-left: 6px;
+}
+#tideLineCanvas { height: 120px; display: block; }
+
+/* ====== 風速＋風向 ====== */
+.wind-combo canvas {
+  background: transparent;
+}
+.wind-combo .block-title {
+  color: #2a7d9eff;
+  border-left: 4px solid #2a7d9eff;
+  padding-left: 6px;
+}
+
+/* ====== 気温 ====== */
+.temperature canvas {
+  background: transparent;
+}
+.temperature .block-title {
+  color: #2a7d9eff;
+  border-left: 4px solid #2a7d9eff;
+  padding-left: 6px;
+}
+
+/* ====== PC ====== */
+@media (min-width: 1025px) {
+  .chart-inner {
+    width: 100%;
+  }
+  .forecast-block { padding: 10px 0; }
+  .block-title { 
+    font-size: 14px; 
+    width: 150px; /* PC用の幅調整 */
+  }
+  .forecast-block canvas { height: 70px; }
+  .time-labels { font-size: 11px; }
+}
+
+/* ====== タブレット ====== */
+@media (max-width: 1024px) and (min-width: 769px) {
+  .forecast-block { padding: 8px 0; }
+  .block-title { 
+    font-size: 14px;
+    width: 145px; /* タブレット用の幅調整 */
+  }
+  .forecast-block canvas { height: 60px; }
+}
+
+/* ====== スマホ ====== */
+@media (max-width: 768px) {
+  .forecast-block {
+    padding: 6px 8px;
+    margin-bottom: 10px;
+  }
+  .block-title {
+    margin-bottom: 4px;
+    font-size: 13px;
+    width: 120px; /* スマホ用の幅 */
+    position: sticky;
+    left: 0; /* 横スクロール時の固定位置 */
+    z-index: 10;
+    padding: 4px 0;
+  }
+  .forecast-block canvas { height: 55px; }
+  .time-axis { padding: 5px; }
+  .time-labels { font-size: 9px; }
+}
+
+/* ====== 極小端末 ====== */
+@media (max-width: 480px) {
+  .forecast-block { padding: 5px 6px; }
+  .block-title { font-size: 12px; }
+  .forecast-block canvas { height: 50px; }
+  .time-labels { font-size: 8px; }
+}
+  </style>
+</head>
+<body>
+  <!-- ===== グラフ本体 ===== -->
+  <div class="chart-block">
+    <div class="chart-scroll-container">
+      <div class="chart-inner">
+        <!-- 時間軸 -->
+        <div class="time-axis">
+          <div id="timeLabels" class="time-labels"></div>
+        </div>
+
+        <!-- 波高（数値）＋ 波高×潮汐（棒＋折れ線） -->
+        <section class="forecast-block wave-tide">
+          <h3 class="block-title">波高 (m)</h3>
+          <div class="canvas-wrapper">
+            <canvas id="waveValueCanvas"></canvas>
+            <canvas id="waveTideCanvas"></canvas>
+          </div>
+        </section>
+
+        <!-- 風速・風向 -->
+        <section class="forecast-block wind-combo">
+          <h3 class="block-title">風速 (m/s) &amp; 風向</h3>
+          <div class="canvas-wrapper">
+            <canvas id="windCanvas"></canvas>
+          </div>
+        </section>
+
+        <!-- 潮汐のみ -->
+        <section class="forecast-block tide-only">
+          <h3 class="block-title">潮汐 (m)</h3>
+          <div class="canvas-wrapper">
+            <canvas id="tideLineCanvas"></canvas>
+          </div>
+        </section>
+
+        <!-- ポインタ・ハイライト等のオーバレイ -->
+        <canvas id="overlayCanvas"></canvas>
+      </div>
+    </div>
+    <div id="tooltip"></div>
+  </div>
+
+  <!-- ===== 既存の描画ロジックを利用（プロジェクトのJSをそのまま使う） =====
+       ※ 同じディレクトリに dataLoader.js / draw.js がある前提
+  -->
+  <script type="module">
+    import { loadSurfData } from './js/dataLoader.js';
+    import { setData, drawAllCharts } from './js//draw.js?v=0.2';
+
+    /** クエリ文字列を取得 ?csv=... */
+    function getCsvFromQuery(defaultPath) {
+      const params = new URLSearchParams(location.search);
+      const p = params.get('csv');
+      return p ? decodeURIComponent(p) : defaultPath;
+    }
+
+    async function initChart() {
+      // 既定CSV（必要に応じて任意のスポットCSVに変更）
+      const defaultCsv = './data/584204204e65fad6a7709981.csv'; // 鵠沼4k（例）
+      const csvPath = getCsvFromQuery(defaultCsv);
+
+      try {
+        const data = await loadSurfData(csvPath, { fetchOptions: { cache: 'no-store' }});
+        setData(data);
+        drawAllCharts(); // 既存の draw.js が #id を参照して描画
+        // オーバレイキャンバスの幅・高さを親に合わせる（簡易調整）
+        syncOverlaySize();
+        window.addEventListener('resize', syncOverlaySize);
+      } catch (err) {
+        console.error('CSV読み込み失敗:', csvPath, err);
+      }
+    }
+
+    function syncOverlaySize() {
+      const overlay = document.getElementById('overlayCanvas');
+      const inner   = document.querySelector('.chart-inner');
+      if (!overlay || !inner) return;
+      const rect = inner.getBoundingClientRect();
+      overlay.width  = Math.ceil(rect.width);
+      // 全体の高さ（時間軸 + ブロック群）をざっくり取得
+      const totalH = inner.scrollHeight;
+      overlay.height = Math.ceil(totalH);
+      overlay.style.width  = rect.width + 'px';
+      overlay.style.height = totalH + 'px';
+    }
+
+    initChart();
+  </script>
+</body>
+</html>
