@@ -1,8 +1,9 @@
-// js/list.js — Globeヒーロー右リスト対応版（7:3）＋日本語対応検索＋検索結果で一覧更新
-// - 検索：region / spot_name / kana / guide（＋aliases）を横断、英語/かな/漢字OK
-// - 入力のたびに右ペインの「ポイント一覧」を検索結果で即時更新
-// - グラフ：右ペイン全面オーバーレイ。閉じる＝完全非表示。常に1枚だけ開く
-// - 一覧クリック：周辺ポイント（同region）を表示しつつ選択ポイントに寄る & グラフ表示
+// js/list.js — Graph/Guideを hero-2col と .pane.surfline-pane の間に常設配置
+// - Globe/country-bar クリック：マップに切替えず、右のポイント一覧だけ更新（SPは一覧へスクロール）
+// - ラベル：デフォルト「All Points」。国クリック時は国旗＋国名に変更
+// - 結果一覧：国旗なし（ポイント名のみ）
+// - Graph/Guide パネルはポイント一覧から分離し、#hero-2col と .pane.surfline-pane の「間」に挿入
+// - ポイントクリックで Graph/Guide の中身だけ更新（一覧はそのまま）
 
 import {
   initMap, setCountryFlags, setPointMarkers, focusSinglePoint, fitToPoints,
@@ -26,7 +27,48 @@ let isMapMode = false;
 let sizeTimer = 0;
 let LAST_LIST = null;
 
-/* ========= レスポンシブ初期視点 ========= */
+/* ===== ユーティリティ ===== */
+function refreshMapSize(delay=60){
+  clearTimeout(sizeTimer);
+  sizeTimer = setTimeout(()=> { try { getMapInstance()?.invalidateSize(); } catch(_){} }, delay);
+}
+const sleep = (ms)=> new Promise(r=>setTimeout(r,ms));
+function isSP(){ return window.innerWidth <= 768; }
+function scrollToListIfSP(){
+  if (!isSP()) return;
+  const target = $('#results') || $('#results-hero');
+  if (target) target.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+/* ===== リスト見出し（ラベル） ===== */
+function ensureListLabel(){
+  let label = $('#list-label');
+  if (label) return label;
+
+  const results = $('#results') || $('#results-hero');
+  if (!results) return null;
+
+  label = document.createElement('div');
+  label.id = 'list-label';
+  label.className = 'list-label';
+  label.innerHTML = `<span class="label-text">All Points</span>`;
+
+  try { results.parentElement.insertBefore(label, results); }
+  catch { results.parentElement?.prepend(label); }
+
+  return label;
+}
+function setListLabel(regionText='', flagCode=''){
+  const label = ensureListLabel(); if (!label) return;
+  if (!regionText){
+    label.innerHTML = `<span class="label-text">All Points</span>`;
+    return;
+  }
+  const flag = flagCode ? `<span class="flag-icon flag-icon-${flagCode} flag-icon-squared" style="margin-right:8px"></span>` : '';
+  label.innerHTML = `${flag}<span class="label-text">${regionText}</span>`;
+}
+
+/* ========= レスポンシブ初期視点（Globe） ========= */
 const GLOBE_POV_BASE = { lat: 10, lng: 140 };
 function calcAltByWidth(w){
   if (w <= 360)  return 1.55;
@@ -42,15 +84,7 @@ function getGlobePOV(host){
   return { ...GLOBE_POV_BASE, altitude: calcAltByWidth(w) };
 }
 
-/* ========= Leafletサイズ補正 ========= */
-function refreshMapSize(delay=60){
-  clearTimeout(sizeTimer);
-  sizeTimer = setTimeout(()=> {
-    try { getMapInstance()?.invalidateSize(); } catch(_){}
-  }, delay);
-}
-
-/* ========= Region重心 ========= */
+/* ========= Region重心（Globe用） ========= */
 function buildRegionCentroids(points){
   const buckets = new Map();
   points.forEach(s=>{
@@ -70,7 +104,6 @@ function buildRegionCentroids(points){
 }
 
 /* ========= Globe準備待ち ========= */
-const sleep = (ms)=> new Promise(r=>setTimeout(r,ms));
 async function waitForGlobe(retries=50, interval=60){
   for(let i=0;i<retries;i++){
     if (typeof window.Globe === 'function') return window.Globe;
@@ -79,15 +112,15 @@ async function waitForGlobe(retries=50, interval=60){
   return null;
 }
 
-/* ========= Globe描画（安全版） ========= */
+/* ========= Globe描画（★国クリックでリストのみ更新） ========= */
 async function renderGlobe(){
   const host = document.getElementById('globe'); if (!host) return;
 
   const CreateGlobe = await waitForGlobe();
-  if (!CreateGlobe){ console.warn('Globe.gl未ロード → Mapへ'); switchToMapAll(); return; }
+  if (!CreateGlobe){ console.warn('Globe.gl未ロード'); return; }
 
   const webglOK = !!document.createElement('canvas').getContext('webgl');
-  if (!webglOK){ console.warn('WebGL無効 → Mapへ'); switchToMapAll(); return; }
+  if (!webglOK){ console.warn('WebGL無効'); return; }
 
   host.innerHTML = '';
   host.style.minHeight = '400px';
@@ -106,7 +139,7 @@ async function renderGlobe(){
   if (typeof g.animateIn === 'function') g.animateIn(false);
   globe = g;
 
-  // ライト
+  // ライト（任意）
   try{
     const THREE = window.THREE;
     const scene = g.scene?.();
@@ -120,7 +153,7 @@ async function renderGlobe(){
 
   g.pointsData([]);
 
-  // 国旗ピン
+  // 国旗ピン（クリック＝リスト更新＋SPは一覧へスクロール）
   const flagData = buildRegionCentroids(ALL).map(d=>({
     ...d, flagUrl: d.flag ? `https://flagcdn.com/32x24/${d.flag}.png` : null
   }));
@@ -139,7 +172,10 @@ async function renderGlobe(){
         ? `<img loading="lazy" alt="${d.region}" src="${d.flagUrl}" width="34" height="24">
           <span class="globe-flag-label">${d.region}</span>`
         : `<span class="globe-flag-label">${d.region}</span>`;
-    el.addEventListener('click', (e)=>{ e.stopPropagation(); switchToMapByRegion(d.region); });
+    el.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      selectRegionForList(d.region, d.flag);
+    });
     return el;
   });
 
@@ -157,7 +193,7 @@ async function renderGlobe(){
     }
   }catch(_){}
 
-  // リサイズ追従（未操作の間のみPOVも追従）
+  // リサイズ追従
   let userInteracted = false;
   ['pointerdown','wheel','touchstart','keydown'].forEach(ev=>{
     host.addEventListener(ev, ()=> { userInteracted = true; }, { passive:true, once:true });
@@ -175,107 +211,72 @@ async function renderGlobe(){
 
 /* ========= ビュー切替 ========= */
 function showGlobeOnly(){
-  const g = document.getElementById('globe');
-  const m = document.getElementById('map');
-  g?.classList.remove('is-hidden');
-  m?.classList.add('is-hidden');
-  document.getElementById('left-switch')?.classList.remove('map-mode');
+  $('#globe')?.classList.remove('is-hidden');
+  $('#map')?.classList.add('is-hidden');
+  $('#left-switch')?.classList.remove('map-mode');
   isMapMode = false;
 }
-
 function showMapOnly(){
-  const g = document.getElementById('globe');
-  const m = document.getElementById('map');
-  g?.classList.add('is-hidden');
-  m?.classList.remove('is-hidden');
-  document.getElementById('left-switch')?.classList.add('map-mode');
+  $('#globe')?.classList.add('is-hidden');
+  $('#map')?.classList.remove('is-hidden');
+  $('#left-switch')?.classList.add('map-mode');
   isMapMode = true;
   refreshMapSize(120);
 }
 
-function switchToMapAll(){
-  showMapOnly();
-  setCountryFlags(ALL, {
-    onClick: (_region, spots) => {
-      setPointMarkers(spots, { onClick: (s)=> openGraphPanel(s) });
-      renderResults(spots); refreshMapSize();
-    }
-  });
-  const lab = $('#map-region-label'); if (lab) lab.textContent = '全体';
-  renderResults(ALL.slice(0, 80));
+/* ===== Graph/Guide パネル（常設：hero-2col と .pane.surfline-pane の間） ===== */
+function insertAfter(refNode, newNode){
+  if (!refNode || !refNode.parentNode) return false;
+  if (refNode.nextSibling) refNode.parentNode.insertBefore(newNode, refNode.nextSibling);
+  else refNode.parentNode.appendChild(newNode);
+  return true;
 }
-function switchToMapByRegion(regionName){
-  const spots = ALL.filter(s => (s.region||'').trim() === regionName);
-  closeGraphPanel();
-  if (!spots.length){ switchToMapAll(); return; }
-  const cen = (()=>{ let la=0,ln=0,n=0;
-    spots.forEach(s=>{ const a=+s.lat,b=+s.lng;
-      if(Number.isFinite(a)&&Number.isFinite(b)){ la+=a; ln+=b; n++; }
-    });
-    return n ? L.latLng(la/n, ln/n) : null;
-  })();
-  if (cen) zoomToRadius(cen, 100, { animate:false });
-  showMapOnly();
-  const lab = $('#map-region-label'); if (lab) lab.textContent = regionName;
-  setPointMarkers(spots, { onClick: (s)=> openGraphPanel(s) });
-  renderResults(spots);
-  refreshMapSize(80);
-}
-function switchToGlobe(){
-  closeGraphPanel();
-  showGlobeOnly();
-  requestAnimationFrame(()=>{
-    try{
-      const host = document.getElementById('globe');
-      const rect = host.getBoundingClientRect();
-      globe.width(rect.width || host.clientWidth || 600);
-      globe.height(rect.height || host.clientHeight || 400);
-      globe.pointOfView(getGlobePOV(host), 600);
-    }catch(_){}
-  });
-}
-
-/* ===== グラフ・パネル ===== */
 function ensureGraphPanel(){
-  // パネルは右ペインの #results の“上に重なる”
-  const host = document.getElementById('results');
-  if (!host) return null;
-
-  let panel = host.querySelector('#graph-panel');
+  // 既存取得 or 新規作成
+  let panel = document.getElementById('graph-panel');
   if (!panel){
-    panel = document.createElement('div');
+    panel = document.createElement('section');
     panel.id = 'graph-panel';
-    panel.setAttribute('aria-hidden','true');
-    panel.hidden = true; // 初期は完全非表示
+    panel.className = 'graph-panel'; // オーバーレイではなく通常フローのブロック
+
     panel.innerHTML = `
       <header class="gp-head">
-        <div id="graph-title" class="gp-title">Loading…</div>
+        <div id="graph-title" class="gp-title">Select a point</div>
         <div class="gp-tabs" role="tablist" aria-label="Graph and Guide">
           <button class="gp-tab is-active" data-tab="graph" role="tab" aria-selected="true">Graph</button>
           <button class="gp-tab"          data-tab="guide" role="tab" aria-selected="false">Guide</button>
         </div>
-        <button type="button" id="graph-close" class="gp-close" aria-label="閉じる">×</button>
       </header>
       <div class="gp-body">
         <div id="graph-view" class="gp-view is-active" role="tabpanel">
           <iframe id="graph-frame" title="ポイントのグラフ" loading="lazy"></iframe>
         </div>
         <div id="guide-view" class="gp-view" role="tabpanel" aria-hidden="true">
-          <div id="guide-body">No guide</div>
+          <div id="guide-body">（ポイントを選ぶとガイドが表示されます）</div>
         </div>
       </div>
     `;
-    host.prepend(panel);
 
-    // タブ切替（閉じるボタンは openGraphPanel 内で毎回バインド）
+    // ===== 挿入位置：
+    //   1) .pane.surfline-pane の直前
+    //   2) なければ #hero-2col の直後
+    //   3) どちらもなければ <main> 末尾
+    const surfPane = document.querySelector('.pane.surfline-pane');
+    const hero = document.getElementById('hero-2col') || document.querySelector('.hero-2col');
+    if (surfPane && surfPane.parentElement){
+      surfPane.parentElement.insertBefore(panel, surfPane);
+    }else if (hero){
+      insertAfter(hero, panel);
+    }else{
+      (document.querySelector('main') || document.body).appendChild(panel);
+    }
+
+    // タブ切替（UIだけ。開閉はしない＝常設）
     panel.addEventListener('click', (e)=>{
-      const btn = e.target.closest('.gp-tab'); if(!btn) return;
-      const tab = btn.dataset.tab; if(!tab) return;
-      const tabs = panel.querySelectorAll('.gp-tab');
-      tabs.forEach(b=>{
-        const active = b===btn;
-        b.classList.toggle('is-active', active);
-        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      const btn = e.target.closest('.gp-tab'); if (!btn) return;
+      const tab = btn.dataset.tab;
+      panel.querySelectorAll('.gp-tab').forEach(b=>{
+        const act = b===btn; b.classList.toggle('is-active', act); b.setAttribute('aria-selected', act?'true':'false');
       });
       const graphV = panel.querySelector('#graph-view');
       const guideV = panel.querySelector('#guide-view');
@@ -290,188 +291,25 @@ function ensureGraphPanel(){
   }
   return panel;
 }
-
-/* ==========================
-   Graph Panel: helpers
-   ========================== */
-/** すでに開いている Graph パネルをすべて閉じる（except は除外） */
-function closeAllGraphPanels(exceptEl){
-  const list = document.querySelectorAll('#graph-panel.is-open, .graph-panel.is-open');
-  list.forEach(el => { if (!exceptEl || el !== exceptEl) closeGraphPanel(el); });
-}
-
-/* ==========================
-   Graph Panel: Open / Close
-   ========================== */
 function openGraphPanel(spot){
-  const TAG = '[GraphPanel:open]';
-
-  // 常に先に全部閉じる（1枚だけ開くポリシー）
-  closeAllGraphPanels();
-
-  const panel = ensureGraphPanel();
-  if (!panel) {
-    console.error(`${TAG} ensureGraphPanel() が null/undefined を返しました。`);
-    return;
-  }
-
-  // 右ペイン全面オーバーレイのアンカーへ配置
-  const anchor =
-    document.querySelector('.right-list .pane') ||
-    document.getElementById('results')?.parentElement ||
-    document.getElementById('results')?.closest('.pane');
-  if (anchor && panel.parentElement !== anchor) {
-    try { anchor.appendChild(panel); }
-    catch (err) { console.error(`${TAG} panel の移動に失敗しました。`, err); }
-  }
+  const panel = ensureGraphPanel(); if (!panel) return;
 
   // タイトル（kana → spot_name → file_name）
-  try {
-    const toLabel = (s) =>
-      (s?.kana && String(s.kana).trim()) ||
-      (s?.spot_name && String(s.spot_name).trim()) ||
-      String(s?.file_name || '').replace(/-/g, ' ').trim();
-    const titleEl = panel.querySelector('#graph-title');
-    if (titleEl) titleEl.textContent = toLabel(spot);
-  } catch (err) {
-    console.warn(`${TAG} タイトル設定に失敗しました。`, err);
-  }
+  const toLabel = (s) =>
+    (s?.kana && String(s.kana).trim()) ||
+    (s?.spot_name && String(s.spot_name).trim()) ||
+    String(s?.file_name || '').replace(/-/g, ' ').trim();
+  const titleEl = panel.querySelector('#graph-title');
+  if (titleEl) titleEl.textContent = toLabel(spot);
 
-  // iframe 埋め込み：chart_iframe.html
-  try {
-    const url = `../chart_iframe.html?region=${encodeURIComponent(spot?.region || '')}&point=${encodeURIComponent(spot?.file_name || '')}`;
-    const frame = panel.querySelector('#graph-frame');
-    if (frame) {
-      if (frame.src !== url) frame.src = url;
-    } else {
-      console.warn(`${TAG} #graph-frame が見つかりません。`);
-    }
-  } catch (err) {
-    console.error(`${TAG} iframe の設定でエラー。`, err);
-  }
+  // iframe
+  const url = `../chart_iframe.html?region=${encodeURIComponent(spot?.region || '')}&point=${encodeURIComponent(spot?.file_name || '')}`;
+  const frame = panel.querySelector('#graph-frame');
+  if (frame && frame.src !== url) frame.src = url;
 
-  // Guide テキスト（points.json の guide）
-  try {
-    const guideBox = panel.querySelector('#guide-body');
-    if (guideBox) {
-      const guide = String(spot?.guide || '').trim();
-      guideBox.textContent = guide || '（ガイド情報はありません）';
-    }
-  } catch (err) {
-    console.warn(`${TAG} ガイド本文の設定に失敗しました。`, err);
-  }
-
-  // タブ初期化：Graph を初期表示
-  try {
-    const tabGraph = panel.querySelector('.gp-tab[data-tab="graph"]');
-    const tabGuide = panel.querySelector('.gp-tab[data-tab="guide"]');
-    tabGraph?.classList.add('is-active');   tabGraph?.setAttribute('aria-selected', 'true');
-    tabGuide?.classList.remove('is-active'); tabGuide?.setAttribute('aria-selected', 'false');
-
-    const graphView = panel.querySelector('#graph-view');
-    const guideView = panel.querySelector('#guide-view');
-    graphView?.classList.add('is-active');   graphView?.setAttribute('aria-hidden', 'false');
-    guideView?.classList.remove('is-active'); guideView?.setAttribute('aria-hidden', 'true');
-  } catch (err) {
-    console.warn(`${TAG} タブ初期化に失敗しました。`, err);
-  }
-
-  // 閉じるボタン：毎回確実にバインド（今の panel を引数で渡す）
-  try {
-    const closeBtn = panel.querySelector('.gp-close');
-    if (closeBtn) {
-      closeBtn.onclick = (e) => { e.preventDefault(); closeGraphPanel(panel); };
-    } else {
-      console.warn(`${TAG} .gp-close が見つかりません。`);
-    }
-  } catch (err) {
-    console.error(`${TAG} 閉じるボタンのバインドでエラー。`, err);
-  }
-
-  // 表示（完全に非表示→表示 方式）
-  try {
-    panel.hidden = false;
-    panel.classList.add('is-open');
-    panel.setAttribute('aria-hidden', 'false');
-  } catch (err) {
-    console.error(`${TAG} パネルの表示切替に失敗しました。`, err);
-  }
-
-  // 下地（一覧）のロック
-  if (anchor) anchor.classList.add('panel-open');
-
-  // 現行のパネル参照をグローバルにも保持（保険）
-  window.__graphPanel = panel;
-
-  // Esc で閉じる（毎回1回限り登録）
-  const onEsc = (e) => { if (e.key === 'Escape') closeGraphPanel(panel); };
-  document.addEventListener('keydown', onEsc, { once: true });
-}
-
-function closeGraphPanel(panelEl){
-  const TAG = '[GraphPanel:close]';
-
-  try {
-    // 参照の取り方を強化：引数 → グローバル → DOM検索
-    const panel =
-      panelEl ||
-      window.__graphPanel ||
-      document.getElementById('graph-panel') ||
-      document.querySelector('#graph-panel, .graph-panel');
-
-    if (!panel) {
-      console.error(`${TAG} パネル要素を解決できませんでした（引数/グローバル/DOM全てで未検出）。`);
-      return;
-    }
-
-    // 1) 完全に非表示へ
-    try {
-      panel.classList.remove('is-open');
-      panel.setAttribute('aria-hidden', 'true');
-      panel.hidden = true;
-      console.debug(`${TAG} パネルを非表示にしました.`);
-    } catch (err) {
-      console.error(`${TAG} 非表示処理でエラー。`, err);
-    }
-
-    // 2) 下地（右ペイン）のロック解除
-    try {
-      const anchor =
-        panel.closest('.right-list .pane') ||
-        document.querySelector('.right-list .pane') ||
-        document.getElementById('results')?.parentElement;
-
-      if (anchor) {
-        anchor.classList.remove('panel-open');
-      } else {
-        console.warn(`${TAG} アンカー(.right-list .pane)が見つからず、panel-open を解除できませんでした。`);
-      }
-    } catch (err) {
-      console.error(`${TAG} 下地ロック解除でエラー。`, err);
-    }
-
-    // 3) iframe を停止・リセット
-    try {
-      const frame = panel.querySelector('#graph-frame');
-      if (frame) {
-        try { frame.contentWindow?.postMessage?.({ type: 'pause' }, '*'); }
-        catch (postErr) { console.warn(`${TAG} iframe postMessage(pause) に失敗。`, postErr); }
-        frame.src = 'about:blank';
-      } else {
-        console.warn(`${TAG} #graph-frame が見つからず、src リセットをスキップ。`);
-      }
-    } catch (err) {
-      console.error(`${TAG} iframe リセットでエラー。`, err);
-    }
-
-    // 4) 参照クリア（保険）
-    if (window.__graphPanel === panel) {
-      window.__graphPanel = null;
-    }
-
-  } catch (err) {
-    console.error(`${TAG} 想定外のエラー。`, err);
-  }
+  // Guide
+  const guideBox = panel.querySelector('#guide-body');
+  if (guideBox) guideBox.textContent = (String(spot?.guide || '').trim() || '（ガイド情報はありません）');
 }
 
 /* ========= リスト描画先の自動選択 ========= */
@@ -482,7 +320,7 @@ function getResultsHost(){
   return document.getElementById('results');
 }
 
-/* ========= 右リスト（共通） ========= */
+/* ========= 右リスト（★国旗を表示しない） ========= */
 function renderResults(list){
   const wrap = getResultsHost(); if (!wrap) return;
   LAST_LIST = list;
@@ -497,33 +335,20 @@ function renderResults(list){
     const row = document.createElement('div');
     row.className = 'result-item';
     row.tabIndex = 0;
-    const flag = document.createElement('span');
-    flag.className = `flag-icon flag-icon-${(s.country_code||'').toLowerCase()} flag-icon-squared`;
-    row.appendChild(flag);
+
+    // 国旗は表示しない → ポイント名のみ
     const name = document.createElement('div');
     name.className = 'name'; name.textContent = displayName(s);
     row.appendChild(name);
 
-    // クリックしたときだけマップを動かす & グラフ表示
-    row.addEventListener('click', ()=>{
-      if (isMapMode){
-        const region = (s.region||'').trim();
-        const regionSpots = ALL.filter(x => (x.region||'').trim() === region);
-        setPointMarkers(regionSpots, { onClick: (x)=> openGraphPanel(x) });
-        focusSinglePoint(s, 10);
-        renderResults(regionSpots);
-        refreshMapSize();
-      }
-      openGraphPanel(s);
+    // クリック：一覧はそのまま、Graph/Guide の中身だけ更新
+    row.addEventListener('click', ()=> { openGraphPanel(s); });
+
+    // キーボード操作
+    row.addEventListener('keydown', (e)=>{
+      if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); row.click(); }
     });
 
-    // キーボード操作（Enter / Space でクリック扱い）
-    row.addEventListener('keydown', (e)=>{
-      if (e.key === 'Enter' || e.key === ' '){
-        e.preventDefault();
-        row.click();
-      }
-    });
     wrap.appendChild(row);
   });
 
@@ -533,7 +358,7 @@ function renderResults(list){
 /* ========= 戻るボタン ========= */
 function wireBackButton(){
   const headerBtn = $('#back-to-globe-btn');
-  if (headerBtn){ headerBtn.addEventListener('click', switchToGlobe); return; }
+  if (headerBtn){ headerBtn.addEventListener('click', showGlobeOnly); return; }
   const host = $('#map'); if (!host) return;
   if (host.querySelector('[data-globe-back]')) return;
   const wrap = document.createElement('div');
@@ -544,17 +369,10 @@ function wireBackButton(){
   btn.type = 'button'; btn.className = 'ctrl-btn';
   btn.setAttribute('data-globe-back','1'); btn.textContent = '🌍 Globeに戻る';
   grp.appendChild(btn); wrap.appendChild(grp); host.appendChild(wrap);
-  btn.addEventListener('click', switchToGlobe);
+  btn.addEventListener('click', showGlobeOnly);
 }
 
-/* ========= 検索（日本語対応：英語・かな・漢字） ========= */
-/* 仕様：
-   - region / spot_name / kana / guide（＋aliases）を索引化
-   - 全半角統一（NFKC）→ 小文字 → カタカナ→ひらがな → 記号/空白除去 で照合
-   - 複数語は AND（全語含有）でマッチ
-   - スコア：完全一致 > 前方一致 > 全語含有
-*/
-
+/* ========= 検索（日本語対応） ========= */
 // カタカナ → ひらがな
 function toHiragana(str=''){
   return String(str).replace(/[\u30A1-\u30FA\u30FD-\u30FF]/g, ch =>
@@ -598,7 +416,7 @@ function buildSearchIndex(points){
       name: r.name,
       flag: best,
       count: r.count,
-      hay:  makeHay(r.name) // ★ 地域名で検索
+      hay:  makeHay(r.name)
     };
   });
 
@@ -631,7 +449,6 @@ function searchEverything(idx, q, limit=200){
   const joined = terms.join('');
   const kwRaw  = String(q||'').trim().toLowerCase();
 
-  // スコア
   const scoreHay = (hay='')=>{
     if (!hay) return -1;
     if (hay === joined)                     return 100; // 完全一致
@@ -640,13 +457,11 @@ function searchEverything(idx, q, limit=200){
     return -1;
   };
 
-  // 地域
   const rHits = idx.regions.map(r=>{
     const sc = scoreHay(r.hay);
     return sc>0 ? {...r, score:sc} : null;
   }).filter(Boolean);
 
-  // ポイント
   const pHits = idx.spots.map(p=>{
     const sc = Math.max(
       scoreHay(p.hay),
@@ -660,7 +475,6 @@ function searchEverything(idx, q, limit=200){
     .slice(0, limit);
 }
 
-// 検索ヒットを「一覧で表示するスポット配列」に展開（重複排除）
 function hitsToSpotList(hits, limit=200){
   const seen = new Set();
   const out = [];
@@ -712,44 +526,31 @@ function initHeaderSearch(idx){
     });
   };
 
-  // クリック時の挙動（従来どおり）
+  // 地域選択：リストのみ更新（SPは一覧へスクロール）
   const pick = (i)=>{
     const h = items[i]; if (!h) return;
     if (h.type === 'region'){
-      switchToMapByRegion(h.name);
-      const lab = $('#map-region-label'); if (lab) lab.textContent = h.name;
-      renderResults(ALL.filter(s => (s.region||'').trim() === h.name));
+      selectRegionForList(h.name, h.flag);
     }else{
       const spot = h.ref;
-      showMapOnly();
-      const regionSpots = ALL.filter(s => (s.region||'').trim() === (spot.region||'').trim());
-      setPointMarkers(regionSpots, { onClick: (s)=> openGraphPanel(s) });
-      fitToPoints([spot], { animate: true });
-      focusSinglePoint(spot, 10);
-      renderResults(regionSpots);
-      refreshMapSize();
-      openGraphPanel(spot);
+      openGraphPanel(spot); // 一覧はそのまま
     }
     closeSuggest();
   };
 
-  // 入力のたびに「サジェスト」と「右リスト」を同期更新
+  // 入力のたびに一覧も更新
   const doSearch = (q)=>{
     const hits = searchEverything(idx, q, 200);
     renderSuggest(hits);
-    const list = q.trim()
-      ? hitsToSpotList(hits, 200)           // 検索クエリあり → ヒットを一覧化
-      : ALL.slice(0, 80);                   // 空欄 → 既定の一覧に戻す
+    const list = q.trim() ? hitsToSpotList(hits, 200) : ALL.slice(0, 80);
     renderResults(list);
   };
 
-  // 入力（デバウンス）
   let t; input.addEventListener('input', ()=>{
     clearTimeout(t);
     t = setTimeout(()=> doSearch(input.value), 100);
   });
 
-  // キー操作（IME中は送信しない）
   input.addEventListener('keydown', (e)=>{
     if (e.isComposing) return;
     if (!box.hidden){
@@ -758,16 +559,11 @@ function initHeaderSearch(idx){
     }
     if (e.key === 'Enter'){
       if (active >= 0 && !box.hidden){ e.preventDefault(); pick(active); }
-      else {
-        // Enter 単独：一覧は既に検索結果に置き換わっているので何もしない
-        e.preventDefault();
-        closeSuggest();
-      }
+      else { e.preventDefault(); closeSuggest(); }
     }else if (e.key === 'Escape'){ closeSuggest(); }
   });
   function updateActive(){ [...box.children].forEach((el,i)=> el.classList.toggle('is-active', i===active)); }
 
-  // ボタンクリック（既に一覧は更新済みなので、サジェストだけ閉じる）
   form.addEventListener('submit', (e)=>{ if (e.isComposing) return; e.preventDefault(); closeSuggest(); });
   const btn = form.querySelector('.head-btn');
   if (btn){ btn.addEventListener('click', (e)=>{ e.preventDefault(); closeSuggest(); }); }
@@ -775,38 +571,152 @@ function initHeaderSearch(idx){
   document.addEventListener('click', (e)=>{ if (!form.contains(e.target)) closeSuggest(); }, true);
 }
 
+/* ========= 国バー（header直下の横スクロール） ========= */
+// HTML側に <nav id="country-bar"><div id="country-scroll"></div></nav> がある前提。
+// なければ自動生成して header 直下に挿入。
+function ensureCountryBarShell(){
+  let bar = document.getElementById('country-bar');
+  if (!bar){
+    const header = document.querySelector('.page-head') || document.querySelector('header');
+    bar = document.createElement('nav');
+    bar.id = 'country-bar';
+    bar.className = 'country-bar';
+    const inner = document.createElement('div');
+    inner.id = 'country-scroll';
+    inner.className = 'country-scroll';
+    bar.appendChild(inner);
+    if (header && header.parentElement){
+      header.parentElement.insertBefore(bar, header.nextSibling);
+    }else{
+      document.body.prepend(bar);
+    }
+  }else if (!bar.querySelector('#country-scroll')){
+    const inner = document.createElement('div');
+    inner.id = 'country-scroll';
+    inner.className = 'country-scroll';
+    bar.appendChild(inner);
+  }
+  return bar.querySelector('#country-scroll');
+}
+
+// ★リストだけ更新（共通ハンドラ）
+function selectRegionForList(regionName, flagCode=''){
+  const spots = ALL.filter(s => (s.region||'').trim() === regionName);
+  renderResults(spots);
+  setListLabel(regionName, flagCode);
+  scrollToListIfSP();
+}
+
+function buildCountryBar(points){
+  const wrap = ensureCountryBarShell();
+  if (!wrap) return;
+
+  // region + country_code でユニーク化
+  const byKey = new Map();
+  for (const p of points){
+    const region = (p.region || '').trim();
+    const cc = (p.country_code || '').toLowerCase().trim();
+    if (!region || !cc) continue;
+    const key = `${region}__${cc}`;
+    if (!byKey.has(key)) byKey.set(key, { region, cc, spots: [] });
+    byKey.get(key).spots.push(p);
+  }
+  const countries = [...byKey.values()].sort((a,b)=> a.region.localeCompare(b.region, 'ja'));
+
+  wrap.innerHTML = '';
+
+  // 「All」
+  const allBtn = document.createElement('button');
+  allBtn.className = 'country-pill is-active';
+  allBtn.dataset.key = 'ALL';
+  allBtn.innerHTML = `
+    <span style="display:inline-block;width:18px;height:18px;border-radius:4px;background:#223049"></span>
+    <span>All</span>
+    <span class="cnt">${points.length}</span>
+  `;
+  wrap.appendChild(allBtn);
+
+  // 各国
+  for (const c of countries){
+    const btn = document.createElement('button');
+    btn.className = 'country-pill';
+    btn.dataset.key = `${c.region}__${c.cc}`;
+    btn.innerHTML = `
+      <span class="flag"><span class="flag-icon flag-icon-${c.cc} flag-icon-squared"></span></span>
+      <span class="label">${c.region}</span>
+      <span class="cnt">${c.spots.length}</span>
+    `;
+    wrap.appendChild(btn);
+  }
+
+  // クリック動作（委譲）— マップ切替はしない
+  wrap.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.country-pill');
+    if (!btn) return;
+
+    // 見た目のアクティブ切替
+    [...wrap.querySelectorAll('.country-pill')].forEach(b => b.classList.remove('is-active'));
+    btn.classList.add('is-active');
+    btn.scrollIntoView({ inline:'center', behavior:'smooth', block:'nearest' });
+
+    const key = btn.dataset.key;
+    if (key === 'ALL'){
+      renderResults(ALL.slice(0, 120));
+      setListLabel('', '');
+      scrollToListIfSP();
+      return;
+    }
+
+    const [region, cc] = key.split('__');
+    selectRegionForList(region, cc);
+  });
+}
+
 /* ========= 起動 ========= */
 document.addEventListener('DOMContentLoaded', async ()=>{
   const openMapBtn = $('#open-map-btn'); if (openMapBtn) openMapBtn.style.display = 'none';
-  initMap('map', { center:[20,0], zoom:3, dark:false });   // 先にMap準備
+
+  // Mapは裏で準備（表示はGlobeのまま）
+  initMap('map', { center:[20,0], zoom:3, dark:false });
   wireBackButton();
-  showGlobeOnly();                                         // 初期はGlobe（右に#results-hero）
+  showGlobeOnly();
 
   try{
     const res = await fetch(DATA_URL, { cache:'no-store' });
     ALL = await res.json();
 
-    // Map用の国旗レイヤ
+    // 国バー（header直下）
+    buildCountryBar(ALL);
+
+    // 地図の国旗レイヤ（地図内の国旗クリック時だけマップ遷移）
     setCountryFlags(ALL, {
       onClick: (_region, spots) => {
+        showMapOnly();
         setPointMarkers(spots, { onClick: (s)=> openGraphPanel(s) });
         renderResults(spots); refreshMapSize();
+        setListLabel(_region, (spots[0]?.country_code||'').toLowerCase());
       }
     });
 
-    // 検索インデックス構築（日本語対応）
+    // 検索（日本語対応）
     const idx = buildSearchIndex(ALL);
     initHeaderSearch(idx);
 
-    // Globe描画
+    // Graph/Guide の常設セクションを先に作っておく
+    ensureGraphPanel();
+
+    // Globe（クリックでリストのみ更新）
     await renderGlobe();
 
-    // 初期表示：Globe右リストに全体の一部を表示
+    // 初期表示：右リストは全体の一部／ラベルはデフォルト
     renderResults(ALL.slice(0, 80));
+    setListLabel('', '');
 
   }catch(e){
     console.error('ポイントデータ読み込み失敗:', e);
-    switchToMapAll();
+    ensureListLabel(); setListLabel('', '');
+    renderResults([]);
+    ensureGraphPanel();
   }
 
   window.addEventListener('resize', ()=> isMapMode && refreshMapSize(60));

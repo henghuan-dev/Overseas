@@ -55,7 +55,7 @@
       </form>
 
 
-      <div class="point-name">海外ポイント一覧</div>
+      <div class="point-name">海外ポイント</div>
     </header>
 
     <!-- ========== 広告バナー（任意） ========== -->
@@ -66,6 +66,11 @@
       </a>
       -->
     </section>
+    <nav id="country-bar" class="country-bar">
+      <div class="country-scroll" id="country-scroll">
+        <!-- JSで動的に埋め込み -->
+      </div>
+    </nav>
 
     <!-- =============================
          ① Globeビュー（初期表示）
@@ -97,7 +102,6 @@
 
   <!-- 右：ポイント一覧（常時同じUI。結果だけJSで差し替え） -->
   <aside class="hero-right right-list pane" aria-labelledby="ttl-points">
-    <h2 class="box-title" id="ttl-points">ポイント一覧</h2>
     <div id="results" class="results" aria-live="polite"></div>
   </aside>
 </section>

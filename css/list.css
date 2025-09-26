@@ -174,6 +174,80 @@ body::after{
   border: 1px solid rgba(79,241,229,.22);
   box-shadow: 0 10px 26px rgba(0,0,0,.35);
 }
+/* ============================
+   国リスト（横スクロール）
+   ============================ */
+.country-bar{
+  margin: 10px 0 14px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: linear-gradient(180deg, rgba(17,24,39,.55), rgba(17,24,39,.35));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.35);
+}
+.country-scroll{
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+  min-width: max-content;
+}
+.country-pill{
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(17,24,39,.82), rgba(17,24,39,.68));
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 12px rgba(0,0,0,.35);
+  cursor: pointer;
+  transition: transform .15s, background .2s, border-color .2s, color .2s;
+}
+.country-pill:hover{
+  background: rgba(79,241,229,.14);
+  border-color: var(--line-strong);
+  color: #BDF9F4;
+}
+.country-pill:active{ transform: scale(.96); }
+
+.country-pill .flag{
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+.country-pill .flag > span.flag-icon{
+  font-size: 14px;
+  line-height: 1;
+  display: block;
+}
+
+/* 件数バッジ（任意） */
+.country-pill .cnt{
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #9BDAD6;
+  background: rgba(79,241,229,.14);
+  border: 1px solid rgba(79,241,229,.32);
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+/* 選択状態 */
+.country-pill.is-active{
+  background: linear-gradient(180deg, rgba(42,127,255,.22), rgba(42,127,255,.12));
+  border-color: #3a6fd8;
+  box-shadow: 0 0 0 4px rgba(79,241,229,.10);
+}
+
 
 /* -----------------------------------------
    [Pane]
@@ -461,46 +535,47 @@ body::after{
 }
 
 /* =========================================
-   [Graph Overlay：右ペイン全面オーバーレイ]
-   - #graph-panel が .right-list .pane を全面で覆う
-   - 開いている間は下の一覧を操作不可に
+   Graph/Guide（通常フロー配置版）
+   - hero-2col と .pane.surfline-pane の「間」に常設
+   - オーバーレイではなく、通常のレイアウトフローに参加
    ========================================= */
+
+/* 旧オーバーレイ指定を打ち消し（重要） */
 #graph-panel{
-  position:absolute;
-  inset:0;                        /* 右ペイン（.right-list .pane）全面 */
-  z-index:30;
-
-  /* 完全に非表示（初期状態） */
-  display:none;
-  /* hidden 属性が付いたときの保険 */
-  /* ※ JSで panel.hidden=true を付けるので、こちらも効く */
-}
-#graph-panel.is-open{
-  display:grid;                   /* 開いたときだけ描画 */
-  grid-template-rows:auto 1fr;
-
-  /* 見た目（必要ならお好みで調整） */
-  background: rgba(11,20,36,.96);
-  backdrop-filter: blur(6px);
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  display: block !important;               /* 常時レイアウトに参加 */
+  grid-template-rows: none !important;
+  backdrop-filter: none;                   /* 旧: オーバーレイのぼかしを解除 */
+  border-radius: var(--rad, 12px);
   border: 1px solid rgba(255,255,255,.06);
-  border-radius: var(--rad);
-  box-shadow: 0 12px 32px rgba(0,0,0,.45);
+  background: rgba(11,20,36,.96);
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  margin: 20px auto;
+  width: 100%;
+  max-width: min(1200px, 96vw);
 }
 
-/* パネル開時：下地のスクロール/操作を抑止（従来どおり） */
-.right-list .pane:has(#graph-panel.is-open) #results{ overflow:hidden; }
-.right-list .pane:has(#graph-panel.is-open) .result-item{ pointer-events:none; }
-.right-list .pane:has(#graph-panel.is-open) > .box-title{ visibility:hidden; }
+/* is-open の有無に依らず見せる（タブ切替のみで中身を見せる設計） */
+#graph-panel.is-open { display: block; }
 
-/* JSフォールバック（.panel-open を付ける場合） */
-.right-list .pane.panel-open #results{ overflow:hidden; }
-.right-list .pane.panel-open .result-item{ pointer-events:none; }
-.right-list .pane.panel-open > .box-title{ visibility:hidden; }
+/* 旧：パネル開時に右リストの操作を止める指定は不要なので打ち消し */
+.right-list .pane:has(#graph-panel.is-open) #results,
+.right-list .pane:has(#graph-panel.is-open) .result-item,
+.right-list .pane:has(#graph-panel.is-open) > .box-title,
+.right-list .pane.panel-open #results,
+.right-list .pane.panel-open .result-item,
+.right-list .pane.panel-open > .box-title{
+  overflow: visible !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+}
 
-/* パネル内レイアウト（既存のままでOK。必要なら残して） */
+/* ===== パネル内レイアウト ===== */
 .gp-head{
   display:flex; align-items:center; gap:12px;
-  padding:12px 14px;
+  padding:12px 16px;
   border-bottom:1px solid rgba(255,255,255,.08);
   background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
 }
@@ -512,18 +587,43 @@ body::after{
   background: rgba(255,255,255,.10); color:#e6f0ff; font-weight:600;
 }
 .gp-tab.is-active{ background:#2a7fff; color:#fff; }
-.gp-close{
-  margin-left:8px;
-  appearance:none; border:0; cursor:pointer;
-  width:32px; height:32px; border-radius:10px;
-  background: rgba(255,255,255,.12);
-  color:#fff; font-size:18px; line-height:32px; text-align:center;
-}
-.gp-body{ overflow:hidden; }
-.gp-view{ display:none; width:100%; height:100%; }
+
+.gp-body{ padding:12px 16px; }
+.gp-view{ display:none; width:100%; }
 .gp-view.is-active{ display:block; }
-#graph-frame{ width:100%; height:100%; border:0; display:block; }
-#guide-body{ padding:14px; line-height:1.7; color:#e6f0ff; white-space:pre-wrap; }
+
+/* 埋め込みグラフ */
+#graph-frame{
+  width:100%;
+  border:0;
+  display:block;
+  min-height: 440px;
+}
+
+/* Guide テキスト */
+#guide-body{
+  padding:14px;
+  line-height:1.7;
+  color:#e6f0ff;
+  white-space:pre-wrap;
+}
+
+/* ===== レスポンシブ ===== */
+@media (max-width: 768px){
+  #graph-panel{
+    margin: 16px auto;
+    border-radius: 10px;
+  }
+  .gp-head{ padding:10px 12px; }
+  .gp-body{ padding:10px 12px; }
+  #graph-frame{ min-height: 360px; }
+}
+
+/* （任意）薄い境界と余白のトークン */
+:root{
+  --rad: 12px;
+}
+
 
 /* -----------------------------------------
    [Leaflet 調整（暗色UI）]

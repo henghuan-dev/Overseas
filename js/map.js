@@ -8,8 +8,11 @@ import { createClusterOptions, makeFlagIcon, makeGreenMarkerIcon } from './layer
 
 let map, cluster, flagLayer;
 let worldBounds = null;  // ← 直近選択国の境界を保持
+let homeBounds = null;
 const DEFAULT_CENTER = [28, 28];
 const DEFAULT_ZOOM   = 1.8;
+const CUSTOM_ZOOM_STEPS = Object.freeze([2, 3.5, 5, 6.5, 8, 9.5, 11, 12.5, 14, 16, 18]);
+const ZOOM_EPSILON = 1e-3;
 let basemapLight, basemapDark, currentTheme = 'light';
 let scaleControl = null;
 const POINT_ZOOM_THRESHOLD = 5;
@@ -23,8 +26,18 @@ const POINT_ZOOM_THRESHOLD = 5;
  *  - dark: true で Carto Dark を初期適用（デフォルト false = Voyager）
  */
 export function initMap(domId = 'map', { center = [20, 0], zoom = 8, dark = false } = {}) {
+  const minZoom = Math.min(DEFAULT_ZOOM, zoom, ...CUSTOM_ZOOM_STEPS);
+  const maxZoom = Math.max(zoom, ...CUSTOM_ZOOM_STEPS, 20);
   // Leaflet標準のズームUIは消して自前UIを重ねる
-  map = L.map(domId, { scrollWheelZoom: true, worldCopyJump: true, zoomControl: false }).setView(center, zoom);
+  // map = L.map(domId, { scrollWheelZoom: true, worldCopyJump: true, zoomControl: false }).setView(center, zoom);
+  map = L.map(domId, {
+    scrollWheelZoom: true,
+    worldCopyJump: true,
+    zoomControl: false,
+    zoomSnap: 0.1,
+    minZoom,
+    maxZoom
+  }).setView(center, zoom);
 
   // Carto ベース
   basemapLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
@@ -71,6 +84,63 @@ function toggleLayersByZoom() {
     if (map.hasLayer(cluster)) map.removeLayer(cluster);
   }
 }
+function getSortedZoomLevels() {
+  const levels = new Set(CUSTOM_ZOOM_STEPS);
+  levels.add(DEFAULT_ZOOM);
+
+  if (map) {
+    const min = map.getMinZoom?.();
+    const max = map.getMaxZoom?.();
+    if (Number.isFinite(min)) levels.add(min);
+    if (Number.isFinite(max)) levels.add(max);
+  }
+
+  return Array.from(levels)
+    .filter((z) => Number.isFinite(z))
+    .sort((a, b) => a - b);
+}
+
+function resolveNextZoomLevel(current, direction) {
+  if (!Number.isFinite(current) || !map) return null;
+
+  const levels = getSortedZoomLevels();
+  if (!levels.length) return null;
+
+  if (direction > 0) {
+    for (const level of levels) {
+      if (level - current > ZOOM_EPSILON) {
+        const max = map.getMaxZoom?.();
+        return Number.isFinite(max) ? Math.min(level, max) : level;
+      }
+    }
+    const max = map.getMaxZoom?.();
+    if (Number.isFinite(max) && max - current > ZOOM_EPSILON) return max;
+    return null;
+  }
+
+  if (direction < 0) {
+    for (let i = levels.length - 1; i >= 0; i--) {
+      const level = levels[i];
+      if (current - level > ZOOM_EPSILON) {
+        const min = map.getMinZoom?.();
+        return Number.isFinite(min) ? Math.max(level, min) : level;
+      }
+    }
+    const min = map.getMinZoom?.();
+    if (Number.isFinite(min) && current - min > ZOOM_EPSILON) return min;
+    return null;
+  }
+
+  return null;
+}
+
+function stepZoom(direction) {
+  const target = resolveNextZoomLevel(map?.getZoom?.(), direction);
+  if (Number.isFinite(target)) {
+    map.setZoom(target, { animate: true });
+  }
+}
+
 
 /** ───── モダンUI（拡大/縮小/ホーム/ダーク/スケール） ───── */
 function injectModernControls(hostId){
@@ -99,15 +169,22 @@ function injectModernControls(hostId){
     const btn = e.target.closest('.ctrl-btn'); if (!btn) return;
     const act = btn.dataset.act;
     switch(act){
-      case 'zoom-in':  map.setZoom(map.getZoom()+1, { animate:true }); break;
-      case 'zoom-out': map.setZoom(map.getZoom()-1, { animate:true }); break;
+      // case 'zoom-in':  map.setZoom(map.getZoom()+1, { animate:true }); break;
+      // case 'zoom-out': map.setZoom(map.getZoom()-1, { animate:true }); break;
+      case 'zoom-in':  stepZoom(1); break;
+      case 'zoom-out': stepZoom(-1); break;
       case 'home': {
         // 国旗レイヤを前面に戻す
         if (!map.hasLayer(flagLayer)) map.addLayer(flagLayer);
         if (map.hasLayer(cluster))    map.removeLayer(cluster);
         // 世界境界があればそこへ、なければデフォルトへ
-        map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 0.6 });
-        break;
+        if (homeBounds) {
+          map.flyToBounds(homeBounds, { animate: true, duration: 0.6, padding: [32, 32] });
+        } else if (worldBounds) {
+          map.flyToBounds(worldBounds, { animate: true, duration: 0.6, padding: [32, 32] });
+        } else {
+          map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 0.6 });
+        }
       }
       case 'theme':    toggleTheme(); break;
     }
@@ -182,15 +259,26 @@ export function setCountryFlags(points, { onClick } = {}) {
 
     m.on('click', () => {
     // 重心を求めて半径100kmでズーム
-    let lat = 0, lng = 0, n = 0;
-    spots.forEach(s => {
-      const la = parseFloat(s.lat), ln = parseFloat(s.lng);
-      if (Number.isFinite(la) && Number.isFinite(ln)) { lat += la; lng += ln; n++; }
-    });
-    if (!n) return;
-    zoomToRadius(L.latLng(lat/n, lng/n), 100);
-    toggleLayersByZoom();
-    onClick?.(region, spots);
+    // let lat = 0, lng = 0, n = 0;
+    // spots.forEach(s => {
+    //   const la = parseFloat(s.lat), ln = parseFloat(s.lng);
+    //   if (Number.isFinite(la) && Number.isFinite(ln)) { lat += la; lng += ln; n++; }
+    // });
+    // if (!n) return;
+    // zoomToRadius(L.latLng(lat/n, lng/n), 100);
+    // toggleLayersByZoom();
+    // onClick?.(region, spots);
+    updateHomeTarget(spots);
+      // 重心を求めて半径100kmでズーム
+      let lat = 0, lng = 0, n = 0;
+      spots.forEach(s => {
+        const la = parseFloat(s.lat), ln = parseFloat(s.lng);
+        if (Number.isFinite(la) && Number.isFinite(ln)) { lat += la; lng += ln; n++; }
+      });
+      if (!n) return;
+      zoomToRadius(L.latLng(lat/n, lng/n), 100);
+      toggleLayersByZoom();
+      onClick?.(region, spots);
     });
   });
   worldBounds = flagPositions.length ? L.latLngBounds(flagPositions) : null;
