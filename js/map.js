@@ -1,13 +1,13 @@
 // js/map.js
 // Carto Voyager / Carto Dark を使った“モダンUI”版（緑色マーカー対応）
-// - ズーム＋/−、ホーム、ダーク切替、スケール表示ボタン（自前UI）
+// - ズーム＋/−、ホーム、ダーク切替、自前UI（右上で縦配置。Globeボタンの下に自動調整）
 // - 国旗⇄ポイント切替は従来どおり
 // - ポイントのマーカーは layers.js の makeGreenMarkerIcon() を使用
 
 import { createClusterOptions, makeFlagIcon, makeGreenMarkerIcon } from './layers.js?v=0.1';
 
 let map, cluster, flagLayer;
-let worldBounds = null;  // ← 直近選択国の境界を保持
+let worldBounds = null;   // ← 直近選択国の重心群
 let homeBounds = null;
 const DEFAULT_CENTER = [28, 28];
 const DEFAULT_ZOOM   = 1.8;
@@ -19,17 +19,11 @@ const POINT_ZOOM_THRESHOLD = 5;
 
 /**
  * マップ初期化
- * @param {string} domId
- * @param {object} opts
- *  - center: 初期中心 [lat, lng]
- *  - zoom: 初期ズーム
- *  - dark: true で Carto Dark を初期適用（デフォルト false = Voyager）
  */
 export function initMap(domId = 'map', { center = [20, 0], zoom = 8, dark = false } = {}) {
   const minZoom = Math.min(DEFAULT_ZOOM, zoom, ...CUSTOM_ZOOM_STEPS);
   const maxZoom = Math.max(zoom, ...CUSTOM_ZOOM_STEPS, 20);
-  // Leaflet標準のズームUIは消して自前UIを重ねる
-  // map = L.map(domId, { scrollWheelZoom: true, worldCopyJump: true, zoomControl: false }).setView(center, zoom);
+
   map = L.map(domId, {
     scrollWheelZoom: true,
     worldCopyJump: true,
@@ -66,7 +60,7 @@ export function initMap(domId = 'map', { center = [20, 0], zoom = 8, dark = fals
   // ズームで国旗⇄ポイント切替
   map.on('zoomend', toggleLayersByZoom);
 
-  // モダンUIを右上に重ねる
+  // 右上に自前UI（縦）を重ねる
   injectModernControls(domId);
 
   return { map, cluster, flagLayer };
@@ -84,6 +78,8 @@ function toggleLayersByZoom() {
     if (map.hasLayer(cluster)) map.removeLayer(cluster);
   }
 }
+
+/** カスタム等倍ズームのための補助 */
 function getSortedZoomLevels() {
   const levels = new Set(CUSTOM_ZOOM_STEPS);
   levels.add(DEFAULT_ZOOM);
@@ -99,7 +95,6 @@ function getSortedZoomLevels() {
     .filter((z) => Number.isFinite(z))
     .sort((a, b) => a - b);
 }
-
 function resolveNextZoomLevel(current, direction) {
   if (!Number.isFinite(current) || !map) return null;
 
@@ -117,7 +112,6 @@ function resolveNextZoomLevel(current, direction) {
     if (Number.isFinite(max) && max - current > ZOOM_EPSILON) return max;
     return null;
   }
-
   if (direction < 0) {
     for (let i = levels.length - 1; i >= 0; i--) {
       const level = levels[i];
@@ -130,70 +124,128 @@ function resolveNextZoomLevel(current, direction) {
     if (Number.isFinite(min) && current - min > ZOOM_EPSILON) return min;
     return null;
   }
-
   return null;
 }
-
 function stepZoom(direction) {
   const target = resolveNextZoomLevel(map?.getZoom?.(), direction);
-  if (Number.isFinite(target)) {
-    map.setZoom(target, { animate: true });
-  }
+  if (Number.isFinite(target)) map.setZoom(target, { animate: true });
 }
 
-
-/** ───── モダンUI（拡大/縮小/ホーム/ダーク/スケール） ───── */
+/** ───── 自前UI（右上・縦配置。Globeボタンの下に追従） ───── */
 function injectModernControls(hostId){
   const host = document.getElementById(hostId);
   if (!host) return;
 
-  const wrap = document.createElement('div');
-  wrap.className = 'map-controls';
-  wrap.innerHTML = `
-    <div class="ctrl-group">
-      <button class="ctrl-btn" data-act="zoom-in"   aria-label="Zoom in"><span class="ico">＋</span></button>
-      <button class="ctrl-btn" data-act="zoom-out"  aria-label="Zoom out"><span class="ico">－</span></button>
-      <button class="ctrl-btn" data-act="home"      aria-label="Home"><span class="ico">⌂</span></button>
-      <button class="ctrl-btn" data-act="theme"     aria-label="Toggle dark"><span class="ico">◐</span></button>
-    </div>
-  `;
-  host.appendChild(wrap);
+  // ← ここで「さらに下に」ずらす量をまとめて調整（必要なら値を大きく）
+  const MAP_TOOLS_MARGIN_BELOW_GLOBE =
+    (window && window.MAP_TOOLS_MARGIN_BELOW_GLOBE) ?? 80;
 
-  // スケールの簡易表示ピル（視覚的アクセント）
-  const scalePill = document.createElement('div');
-  scalePill.className = 'scale-pill';
-  scalePill.textContent = 'Scale';
-  host.appendChild(scalePill);
+  // 衝突回避：list.js の .map-controls とは別ID/クラス
+  let wrap = host.querySelector('#map-tools');
+  if (!wrap){
+    wrap = document.createElement('div');
+    wrap.id = 'map-tools';
+    wrap.className = 'map-tools';
+    wrap.innerHTML = `
+      <div class="tools-group">
+        <button class="ctrl-btn" data-act="zoom-in"   aria-label="Zoom in"><span class="ico">＋</span></button>
+        <button class="ctrl-btn" data-act="zoom-out"  aria-label="Zoom out"><span class="ico">－</span></button>
+        <button class="ctrl-btn" data-act="home"      aria-label="Home"><span class="ico">⌂</span></button>
+        <button class="ctrl-btn" data-act="theme"     aria-label="Toggle dark"><span class="ico">◐</span></button>
+      </div>
+    `;
+    host.appendChild(wrap);
+  }
 
+  // 見た目/位置/層を強制（CSS衝突を避ける）
+  Object.assign(wrap.style, {
+    position: 'absolute',
+    right: '12px',
+    top: `${MAP_TOOLS_MARGIN_BELOW_GLOBE}px`, // 初期値。後で正確に再配置
+    zIndex: '650',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    pointerEvents: 'none'
+  });
+
+  const grp = wrap.querySelector('.tools-group');
+  if (grp){
+    Object.assign(grp.style, {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '10px',
+      pointerEvents: 'auto',
+      alignItems: 'flex-end'
+    });
+  }
+  wrap.querySelectorAll('.ctrl-btn').forEach(btn=>{
+    Object.assign(btn.style, {
+      appearance: 'none',
+      border: '1px solid rgba(255,255,255,.10)',
+      cursor: 'pointer',
+      width: '44px', height: '44px',
+      borderRadius: '12px',
+      background: 'rgba(11,20,36,.92)',
+      color: '#e6f0ff',
+      fontWeight: '700',
+      boxShadow: '0 6px 16px rgba(0,0,0,.35)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    });
+  });
+
+  // 「Globeに戻る」（list.js が作る .map-controls）を基準に、その“さらに下”へ配置
+  const positionTools = ()=>{
+    try{
+      const backWrap = host.querySelector('.map-controls'); // ← 戻るボタン側
+      if (!backWrap){
+        wrap.style.top = `${MAP_TOOLS_MARGIN_BELOW_GLOBE}px`;
+        return;
+      }
+      // 位置計算を getBoundingClientRect 基準にして、親子関係の差異に強くする
+      const hostRect = host.getBoundingClientRect();
+      const rect     = backWrap.getBoundingClientRect();
+      const topPx = (rect.bottom - hostRect.top) + MAP_TOOLS_MARGIN_BELOW_GLOBE;
+      wrap.style.top = `${Math.max(MAP_TOOLS_MARGIN_BELOW_GLOBE, topPx)}px`;
+    }catch(_){
+      wrap.style.top = `${MAP_TOOLS_MARGIN_BELOW_GLOBE}px`;
+    }
+  };
+  positionTools();
+  window.addEventListener('resize', positionTools);
+  map.on('zoomend moveend', positionTools);
+  new MutationObserver(positionTools).observe(host, { childList:true, subtree:true, attributes:true });
+
+  // クリック動作
   wrap.addEventListener('click', (e)=>{
     const btn = e.target.closest('.ctrl-btn'); if (!btn) return;
     const act = btn.dataset.act;
     switch(act){
-      // case 'zoom-in':  map.setZoom(map.getZoom()+1, { animate:true }); break;
-      // case 'zoom-out': map.setZoom(map.getZoom()-1, { animate:true }); break;
       case 'zoom-in':  stepZoom(1); break;
       case 'zoom-out': stepZoom(-1); break;
       case 'home': {
-        // 国旗レイヤを前面に戻す
         if (!map.hasLayer(flagLayer)) map.addLayer(flagLayer);
         if (map.hasLayer(cluster))    map.removeLayer(cluster);
-        // 世界境界があればそこへ、なければデフォルトへ
         if (homeBounds) {
-          map.flyToBounds(homeBounds, { animate: true, duration: 0.6, padding: [32, 32] });
+          map.flyToBounds(homeBounds, { animate:true, duration:0.6, padding:[32,32] });
         } else if (worldBounds) {
-          map.flyToBounds(worldBounds, { animate: true, duration: 0.6, padding: [32, 32] });
+          map.flyToBounds(worldBounds, { animate:true, duration:0.6, padding:[32,32] });
         } else {
-          map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 0.6 });
+          map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate:true, duration:0.6 });
         }
+        break;
       }
-      case 'theme':    toggleTheme(); break;
+      case 'theme': toggleTheme(); break;
     }
   });
 }
+
+
 /**
-+ * 直近選択した国のポイント配列から「ホーム」境界を設定
-+ * @param {Array<{lat:string|number,lng:string|number}>} points
-+ */
+ * 直近選択した国のポイント配列から「ホーム」境界を設定
+ */
 export function updateHomeTarget(points=[]){
   const coords = points
     .map(s => [parseFloat(s.lat), parseFloat(s.lng)])
@@ -213,19 +265,17 @@ function toggleTheme(){
     currentTheme = 'light';
   }
 }
+
+/** 任意の中心半径へズーム */
 export function zoomToRadius(latlng, radiusKm = 100, { animate = true } = {}) {
   if (!map) return;
-
   const lat = latlng.lat, lng = latlng.lng;
   const earthRadius = 6371; // km
-
   const dLat = (radiusKm / earthRadius) * (180 / Math.PI);
   const dLng = (radiusKm / earthRadius) * (180 / Math.PI) / Math.cos(lat * Math.PI/180);
-
   const sw = L.latLng(lat - dLat, lng - dLng);
   const ne = L.latLng(lat + dLat, lng + dLng);
   const bounds = L.latLngBounds(sw, ne);
-
   map.fitBounds(bounds, { animate, padding: [24,24] });
 }
 
@@ -258,25 +308,8 @@ export function setCountryFlags(points, { onClick } = {}) {
     flagPositions.push([lat, lng]);
 
     m.on('click', () => {
-    // 重心を求めて半径100kmでズーム
-    // let lat = 0, lng = 0, n = 0;
-    // spots.forEach(s => {
-    //   const la = parseFloat(s.lat), ln = parseFloat(s.lng);
-    //   if (Number.isFinite(la) && Number.isFinite(ln)) { lat += la; lng += ln; n++; }
-    // });
-    // if (!n) return;
-    // zoomToRadius(L.latLng(lat/n, lng/n), 100);
-    // toggleLayersByZoom();
-    // onClick?.(region, spots);
-    updateHomeTarget(spots);
-      // 重心を求めて半径100kmでズーム
-      let lat = 0, lng = 0, n = 0;
-      spots.forEach(s => {
-        const la = parseFloat(s.lat), ln = parseFloat(s.lng);
-        if (Number.isFinite(la) && Number.isFinite(ln)) { lat += la; lng += ln; n++; }
-      });
-      if (!n) return;
-      zoomToRadius(L.latLng(lat/n, lng/n), 100);
+      updateHomeTarget(spots);
+      zoomToRadius(L.latLng(lat, lng), 100);
       toggleLayersByZoom();
       onClick?.(region, spots);
     });
@@ -287,12 +320,8 @@ export function setCountryFlags(points, { onClick } = {}) {
 export function setPointMarkers(points, { onClick } = {}) {
   // 安全な文字列化（XSS対策）
   const esc = (v = '') =>
-    String(v)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // 表示名：kana → spot_name → file_name（ハイフン→スペース）
   const nameOf = (s = {}) => {
     if (s.kana && String(s.kana).trim()) return String(s.kana).trim();
     if (s.spot_name && String(s.spot_name).trim()) return String(s.spot_name).trim();
@@ -311,91 +340,68 @@ export function setPointMarkers(points, { onClick } = {}) {
       riseOnHover: true,
     });
 
-    // ツールチップ：常時表示（permanent）／kana優先
     const label = esc(nameOf(s)) || '—';
     m.bindTooltip(`<strong>${label}</strong>`, {
-      permanent: true,                 // ★ 常時表示
+      permanent: true,
       direction: 'top',
       offset: [0, -12],
       className: 'marker-tooltip',
-      // sticky は不要（常時表示なので）
-    }).openTooltip();                  // 念のため即オープン
+    }).openTooltip();
 
-    // クリックで遷移など
     if (typeof onClick === 'function') {
       m.on('click', () => onClick(s));
-      // タッチ端末でもワンタップで発火（ツールチップは常時表示のため処理簡素化）
       m.on('touchend', () => onClick(s));
     }
 
     cluster.addLayer(m);
   });
 
-  // 現ズームに応じてレイヤ切替（従来仕様を踏襲）
+  // 現ズームに応じてレイヤ切替
   const z = map.getZoom();
   if (z >= POINT_ZOOM_THRESHOLD) {
-    map.addLayer(cluster);
-    map.removeLayer(flagLayer);
+    map.addLayer(cluster); map.removeLayer(flagLayer);
   } else {
-    map.addLayer(flagLayer);
-    map.removeLayer(cluster);
+    map.addLayer(flagLayer); map.removeLayer(cluster);
   }
 }
 
-
-// ====== ズーム/移動の共通ユーティリティ ======
+/** ====== ズーム/移動の共通ユーティリティ ====== */
 const _toLatLngs = (points=[]) =>
-  points
-    .map(s => [Number(s?.lat), Number(s?.lng)])
-    .filter(([la, ln]) => Number.isFinite(la) && Number.isFinite(ln));
+  points.map(s => [Number(s?.lat), Number(s?.lng)])
+        .filter(([la, ln]) => Number.isFinite(la) && Number.isFinite(ln));
 
-/**
- * 指定ポイント群が収まるようにマップを移動
- * - 単一点のときは “寄りすぎ防止” のために maxZoom を尊重
- * - もっと寄せたい/引きたい時は呼び出し側で { maxZoom: 12 } 等を指定
- */
 export function fitToPoints(
   points,
   {
     animate   = true,
     padding   = [24, 24],
     duration  = 0.7,
-    maxZoom   = 11,     // ★ 上限ズーム（寄り過ぎ防止）
-    snapSingle= true,   // 単一点なら focusSinglePoint を使う
-    singleZoom= 10      // 単一点時の固定ズーム（snapSingle=true のときに使用）
+    maxZoom   = 11,
+    snapSingle= true,
+    singleZoom= 10
   } = {}
 ){
   const ll = _toLatLngs(points);
   if (!ll.length) return;
 
-  // 単一点 → 固定ズームで扱いたいケース
   if (ll.length === 1 && snapSingle){
     const [la, ln] = ll[0];
     return focusSinglePoint({ lat: la, lng: ln }, singleZoom, { animate, duration });
   }
 
   const opts = { padding, maxZoom };
-  if (animate) {
-    map.flyToBounds(ll, { ...opts, duration });
-  } else {
-    map.fitBounds(ll, opts);
-  }
+  if (animate) map.flyToBounds(ll, { ...opts, duration });
+  else         map.fitBounds(ll, opts);
 }
 
-/**
- * 単一点へズーム・パン（固定倍率）
- * - 既定ズーム=10（好みに応じて呼び出し側で変更）
- * - レイヤの付け外しはしない（既存の setPointMarkers / クラスタ表示と干渉しないため）
- * - 任意で“単発マーカーを追加”したいときは addMarker:true を使う
- */
 export function focusSinglePoint(
   s,
   zoom = 10,
   {
     animate   = true,
     duration  = 0.7,
-    addMarker = false,  // ★ 単発マーカーが必要なときに true
-    openPopup = false   // addMarker 時にポップアップを開くか
+    addMarker = false,
+    openPopup = false
   } = {}
 ){
   const la = Number(s?.lat), ln = Number(s?.lng);
@@ -405,13 +411,9 @@ export function focusSinglePoint(
   if (animate) map.flyTo(latlng, zoom, { duration });
   else         map.setView(latlng, zoom);
 
-  // 必要なときだけ“単発の緑マーカー”を置く
   if (addMarker) {
     const m = L.marker(latlng, { icon: makeGreenMarkerIcon() }).addTo(map);
-    // 常時ツールチップ派なら popup ではなく tooltip を推奨
-    if (openPopup && typeof displayName === 'function') {
-      m.bindPopup(String(displayName(s) || '')).openPopup();
-    }
+    if (openPopup) m.bindPopup(String((s?.kana || s?.spot_name || '') || '')).openPopup();
     return m;
   }
 }
@@ -420,7 +422,7 @@ export function getMapInstance() { return map; }
 
 /* ===== ヘルパ ===== */
 function displayName(s) {
-  if (s.kana)      return s.kana;               // ← kana を最優先
+  if (s.kana)      return s.kana;
   if (s.spot_name) return toTitle(s.spot_name);
   return 'Unknown';
 }

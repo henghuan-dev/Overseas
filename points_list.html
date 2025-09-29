@@ -18,11 +18,38 @@
   <script defer src="https://unpkg.com/globe.gl@^2.32.0/dist/globe.gl.min.js"></script>
 
   <!-- サイトCSS（base統合後のlist.cssを使用） -->
-  <link rel="stylesheet" href="css/list.css">
+  <link rel="stylesheet" href="css/list.css?v=0.1">
 
   <!-- Leaflet本体（グローバル） -->
   <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script defer src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <!-- ★ 追加：グラフ出し分け用の最小CSS -->
+  <style>
+    :root{
+      --embed-h-pc: clamp(560px, 75vh, 900px); /* PC側の高さ */
+      --embed-h-sp: 520px;                     /* SP側の高さ（適宜調整） */
+      --surfline-h: clamp(420px, 60vh, 800px); /* Surfline 埋め込み高さ */
+    }
+    /* 出し分け用コンテナ */
+    #chart-host{ width:100%; }
+    /* PC用iframe（chart_iframe.html） */
+    #chart-pc{ display:block; width:100%; height:var(--embed-h-pc); border:0; }
+    /* SP用iframe（指定の mjof URL） */
+    #chart-sp{ display:none;  width:100%; height:var(--embed-h-sp); border:0; }
+    /* 768px以下をSP扱い */
+    @media (max-width: 768px){
+      #chart-pc{ display:none; }
+      #chart-sp{ display:block; }
+    }
+    /* Surfline の埋め込みが0高にならないように */
+    .surfline-pane .chart-iframe{
+      width:100%;
+      height:var(--surfline-h);
+      border:0;
+      display:block;
+    }
+  </style>
 </head>
 
 <body>
@@ -54,7 +81,6 @@
         <div id="search-suggest" class="head-suggest" role="listbox" hidden></div>
       </form>
 
-
       <div class="point-name">海外ポイント</div>
     </header>
 
@@ -66,56 +92,73 @@
       </a>
       -->
     </section>
+
+    <!-- 国名横スクロールバー -->
     <nav id="country-bar" class="country-bar">
       <div class="country-scroll" id="country-scroll">
         <!-- JSで動的に埋め込み -->
       </div>
     </nav>
 
-    <!-- =============================
-         ① Globeビュー（初期表示）
-       ============================= -->
-    <!-- ① Globeビュー（初期表示） -->
-<!-- ① Globeビュー（7:3：左Globe / 右リスト） -->
-<!-- === メイン2カラム：左=Globe/Map 切替、右=共通ポイント一覧 === -->
-<!-- ===== ヒーロー 2カラム（左：Globe/Map切替 / 右：一覧 常時表示） ===== -->
-<section id="hero-2col" class="globe-hero" aria-label="世界マップとポイント一覧">
-  <!-- 左：Globe/Map を同じ位置に重ねる（CSSで z-index 切替） -->
-  <div class="hero-left left-switch" id="left-switch">
-    <!-- Globe（初期表示） -->
-    <div id="globe" class="globe-canvas" aria-label="3D地球儀キャンバス"></div>
+    <!-- ===== ヒーロー 2カラム（左：Globe/Map切替 / 右：一覧 常時表示） ===== -->
+    <section id="hero-2col" class="globe-hero" aria-label="世界マップとポイント一覧">
+      <!-- 左：Globe/Map を同じ位置に重ねる（CSSで z-index 切替） -->
+      <div class="hero-left left-switch" id="left-switch">
+        <!-- Globe（初期表示） -->
+        <div id="globe" class="globe-canvas" aria-label="3D地球儀キャンバス"></div>
 
-    <!-- Map（初期は非表示。JSで .is-hidden を外して前面化） -->
-    <div id="map" class="is-hidden" role="application" aria-label="サーフポイント地図"></div>
+        <!-- Map（初期は非表示。JSで .is-hidden を外して前面化） -->
+        <div id="map" class="is-hidden" role="application" aria-label="サーフポイント地図"></div>
 
-    <!-- 左ペインのオーバーレイ（Map時のみ「Globeに戻る」を表示） -->
-    <div class="viewbar" aria-hidden="false">
-      <span id="map-region-label" class="map-region-label" aria-live="polite"></span>
-      <button type="button" id="back-to-globe-btn" class="back-pill">🌍 Globeに戻る</button>
-    </div>
+        <!-- 左ペインのオーバーレイ（Map時のみ「Globeに戻る」を表示） -->
+        <div class="viewbar" aria-hidden="false">
+          <span id="map-region-label" class="map-region-label" aria-live="polite"></span>
+          <button type="button" id="back-to-globe-btn" class="back-pill">🌍 Globeに戻る</button>
+        </div>
 
-    <!-- Globeヒント（Globe時のみ表示） -->
-    <div class="globe-hint" aria-hidden="true">
-      ドラッグで回転・ピンチ/ホイールでズーム・国旗クリックで地図へ
-    </div>
-  </div>
+        <!-- Globeヒント（Globe時のみ表示） -->
+        <div class="globe-hint" aria-hidden="true">
+          ドラッグで回転・ピンチ/ホイールでズーム・国旗クリックで地図へ
+        </div>
+      </div>
 
-  <!-- 右：ポイント一覧（常時同じUI。結果だけJSで差し替え） -->
-  <aside class="hero-right right-list pane" aria-labelledby="ttl-points">
-    <div id="results" class="results" aria-live="polite"></div>
-  </aside>
-</section>
+      <!-- 右：ポイント一覧（常時同じUI。結果だけJSで差し替え） -->
+      <aside class="hero-right right-list pane" aria-labelledby="ttl-points">
+        <div id="results" class="results" aria-live="polite"></div>
+      </aside>
+    </section>
 
+    <!-- ========== もう一つのグラフ：PC=chart_iframe.html / SP=指定iframe ========== -->
+    <section class="pane alt-chart-pane" aria-label="ポイント別チャート">
+      <div id="chart-host">
+        <!-- PC側（同階層に chart_iframe.html がある前提。異なる場合はパスを調整） -->
+        <iframe
+          id="chart-pc"
+          title="ポイントチャート（PC）"
+          src="./chart_iframe.html"
+          loading="lazy"
+          allowfullscreen
+        ></iframe>
 
+        <!-- SP側（指定URL） -->
+        <iframe
+          id="chart-sp"
+          title="ポイントチャート（SP）"
+          src="https://surfline.mjof.xyz/chart.html?&spotId=584204204e65fad6a7709981&paystatus=2"
+          loading="lazy"
+          referrerpolicy="no-referrer"
+          allowfullscreen
+        ></iframe>
+      </div>
+    </section>
 
-
-
-    <!-- ========== Surflineチャート（現状維持／必要なら後で調整） ========== -->
+    <!-- ========== Surflineチャート（現状維持） ========== -->
     <section class="pane surfline-pane" aria-labelledby="ttl-surfline">
       <div id="surfline-chart">
         <iframe
           class="chart-iframe"
           src="https://www.surfline.com/embed/surf-charts/Ishikawa/58581a836630e24c448790fe/@28.293,140.120,3.47z?type=wave-height&client_id=6123ef4f5192b46d74d575a6&days=16"
+          loading="lazy"
           allowfullscreen
         ></iframe>
       </div>
@@ -128,8 +171,13 @@
 
   </div><!-- /.page-wrap -->
 
-  <!-- アプリJS（points_list 用）
-       ※ 二重ロード防止のため list.js のみ直読み（内部で map/layers を使う想定） -->
+  <!-- （任意）幅をまたいだ切替時は、状態をきれいにするためにリロード -->
+  <script>
+    const mql = window.matchMedia('(max-width: 768px)');
+    mql.addEventListener?.('change', () => location.reload());
+  </script>
+
+  <!-- アプリJS（points_list 用） -->
   <script type="module" src="js/list.js"></script>
 </body>
 </html>

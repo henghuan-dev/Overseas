@@ -1,9 +1,10 @@
-// js/list.js — Graph/Guideを hero-2col と .pane.surfline-pane の間に常設配置
-// - Globe/country-bar クリック：マップに切替えず、右のポイント一覧だけ更新（SPは一覧へスクロール）
-// - ラベル：デフォルト「All Points」。国クリック時は国旗＋国名に変更
-// - 結果一覧：国旗なし（ポイント名のみ）
-// - Graph/Guide パネルはポイント一覧から分離し、#hero-2col と .pane.surfline-pane の「間」に挿入
-// - ポイントクリックで Graph/Guide の中身だけ更新（一覧はそのまま）
+// js/list.js — PCは既存グラフ / SPは別iframe（HTML側でCSS切替）に対応した版
+// 仕様：
+//  - 右リスト：検索／国バーから絞り込み、クリックで「Mapへフォーカス」
+//  - SP時は選択後に #chart-host まで自動スクロール（見やすさ向上）
+//  - 各ポイント名の右に surf(min~max)m をJST現在時で表示（CSV最優先）
+//  - Globe：地域クリックでその地域のポイント一覧を右に表示（先頭は自動選択表示のみ）
+//  - ※グラフの動的切替（ポイント別iframe差替）は行いません（PC=既存/ SP=別iframeはHTML+CSSで制御）
 
 import {
   initMap, setCountryFlags, setPointMarkers, focusSinglePoint, fitToPoints,
@@ -38,6 +39,224 @@ function scrollToListIfSP(){
   if (!isSP()) return;
   const target = $('#results') || $('#results-hero');
   if (target) target.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+function scrollToChartIfSP(){
+  if (!isSP()) return;
+  const panel = $('#chart-host');
+  if (panel) panel.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+/* ===== surf(min/max) 抽出ユーティリティ（JST現在時） ===== */
+const CSV_BASE = (() => DATA_URL.replace(/[#?].*$/,'').replace(/[^/]+$/,''))();
+// ★ テスト時にこのCSVを全ポイントで最優先に使う。運用時は '' に。
+const TEST_CSV_ID = '584204204e65fad6a7709981';
+
+const SURF_CACHE = new Map(); // key=cacheId → "0.3~0.6m"
+const CSV_TEXT_CACHE = new Map();
+
+function CSV_CANDIDATES(id){
+  const urls = [];
+  if (TEST_CSV_ID) urls.push(`${CSV_BASE}${TEST_CSV_ID}.csv`);
+  if (id)          urls.push(`${CSV_BASE}${encodeURIComponent(id)}.csv`);
+  return urls;
+}
+function getSpotId(s){
+  return (
+    s?.spotid || s?.spot_id || s?.spotId ||
+    s?.surfline_spot_id || s?.surflineSpotId ||
+    s?.id || s?.file_name || ''
+  );
+}
+
+function fmt1(n){
+  if (!Number.isFinite(+n)) return null;
+  return (+n).toFixed(1).replace(/\.0$/, '.0');
+}
+
+// JST “現在の時”（分秒切り捨て）を UTC ms で
+function jstCurrentHourUtcMs(){
+  const p = new Intl.DateTimeFormat('en-CA',{
+    timeZone:'Asia/Tokyo', hour12:false,
+    year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit'
+  }).formatToParts(new Date());
+  const y = +p.find(x=>x.type==='year').value;
+  const m = +p.find(x=>x.type==='month').value;
+  const d = +p.find(x=>x.type==='day').value;
+  const h = +p.find(x=>x.type==='hour').value;
+  return Date.UTC(y, m-1, d, h, 0, 0, 0);
+}
+
+/* --- CSV パース（ダブルクォート対応の簡易実装） --- */
+function parseCSV(text){
+  const lines = String(text||'').replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l=>l.length);
+  if (!lines.length) return [];
+  const parseLine = (line)=>{
+    const out=[]; let cur=''; let inQ=false;
+    for (let i=0;i<line.length;i++){
+      const ch=line[i];
+      if (ch === '"'){
+        if (inQ && line[i+1] === '"'){ cur+='"'; i++; }
+        else inQ=!inQ;
+      }else if (ch === ',' && !inQ){
+        out.push(cur); cur='';
+      }else{
+        cur+=ch;
+      }
+    }
+    out.push(cur);
+    return out.map(s=>s.trim());
+  };
+  const headers = parseLine(lines[0]).map(h => h.replace(/^"|"$/g,''));
+  return lines.slice(1).map(line=>{
+    const cols = parseLine(line);
+    const obj={};
+    headers.forEach((h,i)=> obj[h] = (cols[i] ?? '').replace(/^"|"$/g,''));
+    return obj;
+  });
+}
+
+/* --- 行から時刻／min-max を推定 --- */
+function rowTimeMs(row){
+  for (const k of Object.keys(row)){
+    const v = row[k];
+    if (v==null || v==='') continue;
+    if (/^(epoch|ts)$/i.test(k)){
+      const n = Number(v); if (!Number.isFinite(n)) continue;
+      return String(v).length>=13 ? n : n*1000;
+    }
+    if (/(time|date|datetime|iso)/i.test(k)){
+      const t = Date.parse(v); if (Number.isFinite(t)) return t;
+    }
+  }
+  return null;
+}
+function rowMinMax(row){
+  const num = (x)=> Number(row[x]);
+  const cands = [
+    ['min','max'], ['surf_min','surf_max'], ['wave_min','wave_max'],
+    ['min_m','max_m'], ['minHeight','maxHeight']
+  ];
+  for (const [a,b] of cands){
+    const mn = num(a), mx = num(b);
+    if (Number.isFinite(mn) && Number.isFinite(mx)) return {min:mn, max:mx};
+  }
+  if (row.surf){
+    try{
+      const s = String(row.surf).replace(/'/g,'"')
+        .replace(/\bTrue\b/g,'true').replace(/\bFalse\b/g,'false').replace(/\bNone\b/g,'null');
+      const o = JSON.parse(s);
+      const v = o?.surf || o;
+      if (typeof v?.min==='number' && typeof v?.max==='number') return {min:v.min, max:v.max};
+    }catch(_){}
+  }
+  return null;
+}
+
+/* --- CSV 読み込み（候補URLを上から順に） → レンジ文字列 --- */
+async function fetchCSVTextFromCandidates(id){
+  const cacheKey = TEST_CSV_ID || id || '__noid__';
+  if (CSV_TEXT_CACHE.has(cacheKey)) return CSV_TEXT_CACHE.get(cacheKey);
+
+  const urls = CSV_CANDIDATES(id);
+  for (const url of urls){
+    try{
+      const res = await fetch(url, { cache:'no-store' });
+      if (res.ok){
+        const t = await res.text();
+        CSV_TEXT_CACHE.set(cacheKey, t);
+        return t;
+      }
+    }catch(_){}
+  }
+  throw new Error('csv not found');
+}
+
+async function loadSurfRangeTextByCSV(spot){
+  const id = getSpotId(spot);
+  const cacheKey = TEST_CSV_ID || id;
+  if (!cacheKey) return '';
+  if (SURF_CACHE.has(cacheKey)) return SURF_CACHE.get(cacheKey);
+
+  try{
+    const csv = await fetchCSVTextFromCandidates(id);
+    const rows = parseCSV(csv);
+    if (!rows.length){ SURF_CACHE.set(cacheKey,''); return ''; }
+
+    const now = jstCurrentHourUtcMs();
+    let best=null, bestDiff=Infinity;
+
+    for (const r of rows){
+      const mm = rowMinMax(r); if (!mm) continue;
+      const t  = rowTimeMs(r);
+      const diff = (t==null) ? 0 : Math.abs(t - now);
+      if (diff < bestDiff){ best = mm; bestDiff = diff; }
+    }
+
+    const txt = (best && fmt1(best.min)!=null && fmt1(best.max)!=null)
+      ? `${fmt1(best.min)}~${fmt1(best.max)}m` : '';
+
+    SURF_CACHE.set(cacheKey, txt);
+    return txt;
+  }catch(err){
+    console.warn('[surf] CSV読み込み失敗:', err);
+    SURF_CACHE.set(cacheKey, '');
+    return '';
+  }
+}
+
+/* ===== inline surf → レンジ（フォールバック） ===== */
+function coerceSurf(val){
+  if (!val) return null;
+  if (typeof val === 'object') return val;
+  if (typeof val === 'string'){
+    try{
+      const s = val.replace(/'/g,'"').replace(/\bTrue\b/g,'true').replace(/\bFalse\b/g,'false').replace(/\bNone\b/g,'null');
+      return JSON.parse(s);
+    }catch(_){ return null; }
+  }
+  return null;
+}
+function pickSurfNowFromInline(surfRaw){
+  const surf = coerceSurf(surfRaw);
+  if (!surf) return null;
+  if (typeof surf.min === 'number' && typeof surf.max === 'number'){
+    return { min: surf.min, max: surf.max };
+  }
+  if (Array.isArray(surf)){
+    const now = jstCurrentHourUtcMs();
+    let best=null, bestDt=Infinity;
+    for (const it of surf){
+      const ts =
+        (typeof it.time==='string' ? Date.parse(it.time) :
+         typeof it.ts==='number'   ? (String(it.ts).length>=13? it.ts : it.ts*1000) :
+         typeof it.epoch==='number'? (String(it.epoch).length>=13? it.epoch : it.epoch*1000) :
+         null);
+      const v = it?.surf || it;
+      if (ts!=null && typeof v?.min==='number' && typeof v?.max==='number'){
+        const d = Math.abs(ts - now);
+        if (d < bestDt){ best={min:v.min, max:v.max}; bestDt=d; }
+      }
+    }
+    return best;
+  }
+  if (typeof surf === 'object'){
+    const now = jstCurrentHourUtcMs();
+    let best=null, bestDt=Infinity;
+    for (const [k,v] of Object.entries(surf)){
+      const ts = Date.parse(k); const vv=v?.surf||v;
+      if (Number.isFinite(ts) && typeof vv?.min==='number' && typeof vv?.max==='number'){
+        const d = Math.abs(ts - now);
+        if (d < bestDt){ best={min:vv.min, max:vv.max}; bestDt=d; }
+      }
+    }
+    return best;
+  }
+  return null;
+}
+function inlineSurfText(s){
+  const r = pickSurfNowFromInline(s?.surf);
+  if (!r) return '';
+  return `${fmt1(r.min)}~${fmt1(r.max)}m`;
 }
 
 /* ===== リスト見出し（ラベル） ===== */
@@ -112,7 +331,7 @@ async function waitForGlobe(retries=50, interval=60){
   return null;
 }
 
-/* ========= Globe描画（★国クリックでリストのみ更新） ========= */
+/* ========= Globe描画（国クリック→リスト更新） ========= */
 async function renderGlobe(){
   const host = document.getElementById('globe'); if (!host) return;
 
@@ -139,7 +358,6 @@ async function renderGlobe(){
   if (typeof g.animateIn === 'function') g.animateIn(false);
   globe = g;
 
-  // ライト（任意）
   try{
     const THREE = window.THREE;
     const scene = g.scene?.();
@@ -153,7 +371,6 @@ async function renderGlobe(){
 
   g.pointsData([]);
 
-  // 国旗ピン（クリック＝リスト更新＋SPは一覧へスクロール）
   const flagData = buildRegionCentroids(ALL).map(d=>({
     ...d, flagUrl: d.flag ? `https://flagcdn.com/32x24/${d.flag}.png` : null
   }));
@@ -174,15 +391,13 @@ async function renderGlobe(){
         : `<span class="globe-flag-label">${d.region}</span>`;
     el.addEventListener('click', (e)=>{
       e.stopPropagation();
-      selectRegionForList(d.region, d.flag);
+      selectRegionForList(d.region, d.flag); // 右リスト更新（先頭は選択表示）
     });
     return el;
   });
 
-  // 視点（レスポンシブ）
   g.pointOfView(getGlobePOV(host), 0);
 
-  // コントロール
   try{
     const ctrl = g.controls?.();
     if (ctrl){
@@ -193,7 +408,6 @@ async function renderGlobe(){
     }
   }catch(_){}
 
-  // リサイズ追従
   let userInteracted = false;
   ['pointerdown','wheel','touchstart','keydown'].forEach(ev=>{
     host.addEventListener(ev, ()=> { userInteracted = true; }, { passive:true, once:true });
@@ -224,133 +438,91 @@ function showMapOnly(){
   refreshMapSize(120);
 }
 
-/* ===== Graph/Guide パネル（常設：hero-2col と .pane.surfline-pane の間） ===== */
-function insertAfter(refNode, newNode){
-  if (!refNode || !refNode.parentNode) return false;
-  if (refNode.nextSibling) refNode.parentNode.insertBefore(newNode, refNode.nextSibling);
-  else refNode.parentNode.appendChild(newNode);
-  return true;
-}
-function ensureGraphPanel(){
-  // 既存取得 or 新規作成
-  let panel = document.getElementById('graph-panel');
-  if (!panel){
-    panel = document.createElement('section');
-    panel.id = 'graph-panel';
-    panel.className = 'graph-panel'; // オーバーレイではなく通常フローのブロック
-
-    panel.innerHTML = `
-      <header class="gp-head">
-        <div id="graph-title" class="gp-title">Select a point</div>
-        <div class="gp-tabs" role="tablist" aria-label="Graph and Guide">
-          <button class="gp-tab is-active" data-tab="graph" role="tab" aria-selected="true">Graph</button>
-          <button class="gp-tab"          data-tab="guide" role="tab" aria-selected="false">Guide</button>
-        </div>
-      </header>
-      <div class="gp-body">
-        <div id="graph-view" class="gp-view is-active" role="tabpanel">
-          <iframe id="graph-frame" title="ポイントのグラフ" loading="lazy"></iframe>
-        </div>
-        <div id="guide-view" class="gp-view" role="tabpanel" aria-hidden="true">
-          <div id="guide-body">（ポイントを選ぶとガイドが表示されます）</div>
-        </div>
-      </div>
-    `;
-
-    // ===== 挿入位置：
-    //   1) .pane.surfline-pane の直前
-    //   2) なければ #hero-2col の直後
-    //   3) どちらもなければ <main> 末尾
-    const surfPane = document.querySelector('.pane.surfline-pane');
-    const hero = document.getElementById('hero-2col') || document.querySelector('.hero-2col');
-    if (surfPane && surfPane.parentElement){
-      surfPane.parentElement.insertBefore(panel, surfPane);
-    }else if (hero){
-      insertAfter(hero, panel);
-    }else{
-      (document.querySelector('main') || document.body).appendChild(panel);
-    }
-
-    // タブ切替（UIだけ。開閉はしない＝常設）
-    panel.addEventListener('click', (e)=>{
-      const btn = e.target.closest('.gp-tab'); if (!btn) return;
-      const tab = btn.dataset.tab;
-      panel.querySelectorAll('.gp-tab').forEach(b=>{
-        const act = b===btn; b.classList.toggle('is-active', act); b.setAttribute('aria-selected', act?'true':'false');
-      });
-      const graphV = panel.querySelector('#graph-view');
-      const guideV = panel.querySelector('#guide-view');
-      if (tab === 'guide'){
-        graphV?.classList.remove('is-active'); graphV?.setAttribute('aria-hidden','true');
-        guideV?.classList.add('is-active');    guideV?.setAttribute('aria-hidden','false');
-      }else{
-        guideV?.classList.remove('is-active'); guideV?.setAttribute('aria-hidden','true');
-        graphV?.classList.add('is-active');    graphV?.setAttribute('aria-hidden','false');
-      }
-    });
-  }
-  return panel;
-}
-function openGraphPanel(spot){
-  const panel = ensureGraphPanel(); if (!panel) return;
-
-  // タイトル（kana → spot_name → file_name）
-  const toLabel = (s) =>
-    (s?.kana && String(s.kana).trim()) ||
-    (s?.spot_name && String(s.spot_name).trim()) ||
-    String(s?.file_name || '').replace(/-/g, ' ').trim();
-  const titleEl = panel.querySelector('#graph-title');
-  if (titleEl) titleEl.textContent = toLabel(spot);
-
-  // iframe
-  const url = `../chart_iframe.html?region=${encodeURIComponent(spot?.region || '')}&point=${encodeURIComponent(spot?.file_name || '')}`;
-  const frame = panel.querySelector('#graph-frame');
-  if (frame && frame.src !== url) frame.src = url;
-
-  // Guide
-  const guideBox = panel.querySelector('#guide-body');
-  if (guideBox) guideBox.textContent = (String(spot?.guide || '').trim() || '（ガイド情報はありません）');
-}
-
-/* ========= リスト描画先の自動選択 ========= */
+/* ========= 右リスト ========= */
 function getResultsHost(){
   if (!isMapMode){
     return document.getElementById('results-hero') || document.getElementById('results');
   }
   return document.getElementById('results');
 }
-
-/* ========= 右リスト（★国旗を表示しない） ========= */
-function renderResults(list){
+function markActiveRow(row){
+  const host = getResultsHost(); if (!host) return;
+  host.classList.add('has-active');
+  host.querySelectorAll('.result-item.is-active').forEach(el => el.classList.remove('is-active'));
+  if (row) row.classList.add('is-active');
+}
+function renderResults(list, opts={}){
+  const { autoOpenFirst=false } = opts;
   const wrap = getResultsHost(); if (!wrap) return;
   LAST_LIST = list;
 
   wrap.innerHTML = '';
+  wrap.classList.remove('has-active');
+
   if (!list || !list.length){
     wrap.innerHTML = '<div class="result-item">該当するポイントがありません</div>';
     if (isMapMode) refreshMapSize();
     return;
   }
-  list.slice(0, 120).forEach(s=>{
+
+  let firstRow = null;
+
+  list.slice(0, 120).forEach((s, idx)=>{
     const row = document.createElement('div');
     row.className = 'result-item';
     row.tabIndex = 0;
 
-    // 国旗は表示しない → ポイント名のみ
     const name = document.createElement('div');
-    name.className = 'name'; name.textContent = displayName(s);
+    name.className = 'name';
+    name.textContent = displayName(s);
+
+    const meta = document.createElement('span');
+    meta.className = 'surf-range';
+    Object.assign(meta.style, { fontSize:'12px', color:'#9BDAD6', marginLeft:'8px', whiteSpace:'nowrap' });
+    const inlineTxt = inlineSurfText(s);
+    if (inlineTxt) meta.textContent = inlineTxt;
+    name.appendChild(meta);
+    loadSurfRangeTextByCSV(s).then(txt => { if (txt) meta.textContent = txt; });
+
     row.appendChild(name);
 
-    // クリック：一覧はそのまま、Graph/Guide の中身だけ更新
-    row.addEventListener('click', ()=> { openGraphPanel(s); });
+    row.addEventListener('click', ()=>{
+      markActiveRow(row);
 
-    // キーボード操作
+      // 同一リージョンのマーカーを並べ、選択スポットへズーム
+      const region = (s.region||'').trim();
+      const regionSpots = ALL.filter(x => (x.region||'').trim() === region);
+
+      showMapOnly();
+      setPointMarkers(regionSpots, { onClick: (x)=> {
+        // マーカー→リスト同期（簡易）
+        const host = getResultsHost();
+        const i = regionSpots.findIndex(r => (r.file_name||'') === (x.file_name||''));
+        if (host && i>=0 && host.children[i]) markActiveRow(host.children[i]);
+        scrollToChartIfSP();
+      }});
+
+      try{
+        fitToPoints([s], { animate: true, maxZoom: 10 });
+        focusSinglePoint(s, 10);
+      }catch(_){}
+
+      refreshMapSize();
+      scrollToChartIfSP();
+    });
+
     row.addEventListener('keydown', (e)=>{
       if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); row.click(); }
     });
 
+    if (idx === 0) firstRow = row;
     wrap.appendChild(row);
   });
+
+  if (autoOpenFirst && list.length){
+    markActiveRow(firstRow);
+    // グラフはPC/SPともHTML側で固定表示のため、ここでは何もしない
+  }
 
   if (isMapMode) refreshMapSize();
 }
@@ -373,32 +545,26 @@ function wireBackButton(){
 }
 
 /* ========= 検索（日本語対応） ========= */
-// カタカナ → ひらがな
 function toHiragana(str=''){
   return String(str).replace(/[\u30A1-\u30FA\u30FD-\u30FF]/g, ch =>
     String.fromCharCode(ch.charCodeAt(0) - 0x60)
   );
 }
-// 正規化：NFKC → lower → カナ→ひらがな
 function normalizeJPBase(str=''){
   return toHiragana(String(str).normalize('NFKC').toLowerCase());
 }
-// 索引用に英数+ひらがな+漢字のみ残す
 function compactForIndex(str=''){
   return String(str).replace(/[^a-z0-9\u3040-\u309F\u4E00-\u9FFF]+/g, '');
 }
-// hay（索引用文字列）を作成
 function makeHay(...fields){
   return compactForIndex(normalizeJPBase(fields.filter(Boolean).join(' ')));
 }
-// クエリ語分割
 function queryTerms(q){
   const base = normalizeJPBase(q||'').trim();
   return base.split(/\s+/).map(compactForIndex).filter(Boolean);
 }
 
 function buildSearchIndex(points){
-  // 地域の集計
   const regionMap = new Map();
   points.forEach(s=>{
     const region = (s.region||'').trim(); if(!region) return;
@@ -451,9 +617,9 @@ function searchEverything(idx, q, limit=200){
 
   const scoreHay = (hay='')=>{
     if (!hay) return -1;
-    if (hay === joined)                     return 100; // 完全一致
-    if (hay.startsWith(joined))             return 85;  // 前方一致
-    if (terms.every(t => hay.includes(t)))  return 70;  // 全語含有
+    if (hay === joined)                     return 100;
+    if (hay.startsWith(joined))             return 85;
+    if (terms.every(t => hay.includes(t)))  return 70;
     return -1;
   };
 
@@ -465,7 +631,7 @@ function searchEverything(idx, q, limit=200){
   const pHits = idx.spots.map(p=>{
     const sc = Math.max(
       scoreHay(p.hay),
-      (p.flag && p.flag === kwRaw ? 75 : -1) // 国コード（例: jp, us）
+      (p.flag && p.flag === kwRaw ? 75 : -1)
     );
     return sc>0 ? {...p, score:sc} : null;
   }).filter(Boolean);
@@ -526,24 +692,35 @@ function initHeaderSearch(idx){
     });
   };
 
-  // 地域選択：リストのみ更新（SPは一覧へスクロール）
   const pick = (i)=>{
     const h = items[i]; if (!h) return;
     if (h.type === 'region'){
       selectRegionForList(h.name, h.flag);
     }else{
       const spot = h.ref;
-      openGraphPanel(spot); // 一覧はそのまま
+      const regionSpots = ALL.filter(s => (s.region||'').trim() === (spot.region||'').trim());
+      showMapOnly();
+      setPointMarkers(regionSpots, { onClick: (s)=> {
+        const host = getResultsHost();
+        const idx = regionSpots.findIndex(r => (r.file_name||'') === (s.file_name||''));
+        if (host && idx>=0 && host.children[idx]) markActiveRow(host.children[idx]);
+        scrollToChartIfSP();
+      }});
+      try{
+        fitToPoints([spot], { animate:true, maxZoom:10 });
+        focusSinglePoint(spot, 10);
+      }catch(_){}
+      refreshMapSize();
+      scrollToChartIfSP();
     }
     closeSuggest();
   };
 
-  // 入力のたびに一覧も更新
   const doSearch = (q)=>{
     const hits = searchEverything(idx, q, 200);
     renderSuggest(hits);
     const list = q.trim() ? hitsToSpotList(hits, 200) : ALL.slice(0, 80);
-    renderResults(list);
+    renderResults(list, { autoOpenFirst: false });
   };
 
   let t; input.addEventListener('input', ()=>{
@@ -571,9 +748,7 @@ function initHeaderSearch(idx){
   document.addEventListener('click', (e)=>{ if (!form.contains(e.target)) closeSuggest(); }, true);
 }
 
-/* ========= 国バー（header直下の横スクロール） ========= */
-// HTML側に <nav id="country-bar"><div id="country-scroll"></div></nav> がある前提。
-// なければ自動生成して header 直下に挿入。
+/* ========= 国バー（header直下の横スクロール：Allなし） ========= */
 function ensureCountryBarShell(){
   let bar = document.getElementById('country-bar');
   if (!bar){
@@ -599,10 +774,9 @@ function ensureCountryBarShell(){
   return bar.querySelector('#country-scroll');
 }
 
-// ★リストだけ更新（共通ハンドラ）
 function selectRegionForList(regionName, flagCode=''){
   const spots = ALL.filter(s => (s.region||'').trim() === regionName);
-  renderResults(spots);
+  renderResults(spots, { autoOpenFirst: true });
   setListLabel(regionName, flagCode);
   scrollToListIfSP();
 }
@@ -611,7 +785,6 @@ function buildCountryBar(points){
   const wrap = ensureCountryBarShell();
   if (!wrap) return;
 
-  // region + country_code でユニーク化
   const byKey = new Map();
   for (const p of points){
     const region = (p.region || '').trim();
@@ -624,19 +797,6 @@ function buildCountryBar(points){
   const countries = [...byKey.values()].sort((a,b)=> a.region.localeCompare(b.region, 'ja'));
 
   wrap.innerHTML = '';
-
-  // 「All」
-  const allBtn = document.createElement('button');
-  allBtn.className = 'country-pill is-active';
-  allBtn.dataset.key = 'ALL';
-  allBtn.innerHTML = `
-    <span style="display:inline-block;width:18px;height:18px;border-radius:4px;background:#223049"></span>
-    <span>All</span>
-    <span class="cnt">${points.length}</span>
-  `;
-  wrap.appendChild(allBtn);
-
-  // 各国
   for (const c of countries){
     const btn = document.createElement('button');
     btn.className = 'country-pill';
@@ -649,25 +809,16 @@ function buildCountryBar(points){
     wrap.appendChild(btn);
   }
 
-  // クリック動作（委譲）— マップ切替はしない
   wrap.addEventListener('click', (e)=>{
     const btn = e.target.closest('.country-pill');
     if (!btn) return;
 
-    // 見た目のアクティブ切替
     [...wrap.querySelectorAll('.country-pill')].forEach(b => b.classList.remove('is-active'));
     btn.classList.add('is-active');
     btn.scrollIntoView({ inline:'center', behavior:'smooth', block:'nearest' });
 
-    const key = btn.dataset.key;
-    if (key === 'ALL'){
-      renderResults(ALL.slice(0, 120));
-      setListLabel('', '');
-      scrollToListIfSP();
-      return;
-    }
-
-    const [region, cc] = key.split('__');
+    const [region, cc] = String(btn.dataset.key || '').split('__');
+    if (!region) return;
     selectRegionForList(region, cc);
   });
 }
@@ -676,7 +827,6 @@ function buildCountryBar(points){
 document.addEventListener('DOMContentLoaded', async ()=>{
   const openMapBtn = $('#open-map-btn'); if (openMapBtn) openMapBtn.style.display = 'none';
 
-  // Mapは裏で準備（表示はGlobeのまま）
   initMap('map', { center:[20,0], zoom:3, dark:false });
   wireBackButton();
   showGlobeOnly();
@@ -685,38 +835,37 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     const res = await fetch(DATA_URL, { cache:'no-store' });
     ALL = await res.json();
 
-    // 国バー（header直下）
     buildCountryBar(ALL);
 
-    // 地図の国旗レイヤ（地図内の国旗クリック時だけマップ遷移）
+    // 国旗クリック（地図 UI）→ リスト更新＆マーカー配置
     setCountryFlags(ALL, {
       onClick: (_region, spots) => {
         showMapOnly();
-        setPointMarkers(spots, { onClick: (s)=> openGraphPanel(s) });
-        renderResults(spots); refreshMapSize();
+        setPointMarkers(spots, { onClick: (s)=> {
+          // マーカー→リスト同期（簡易）
+          const host = getResultsHost();
+          const i = spots.findIndex(r => (r.file_name||'') === (s.file_name||''));
+          if (host && i>=0 && host.children[i]) markActiveRow(host.children[i]);
+          scrollToChartIfSP();
+        }});
+        renderResults(spots, { autoOpenFirst: true });
+        refreshMapSize();
         setListLabel(_region, (spots[0]?.country_code||'').toLowerCase());
       }
     });
 
-    // 検索（日本語対応）
     const idx = buildSearchIndex(ALL);
     initHeaderSearch(idx);
 
-    // Graph/Guide の常設セクションを先に作っておく
-    ensureGraphPanel();
-
-    // Globe（クリックでリストのみ更新）
     await renderGlobe();
 
-    // 初期表示：右リストは全体の一部／ラベルはデフォルト
-    renderResults(ALL.slice(0, 80));
+    renderResults(ALL.slice(0, 80), { autoOpenFirst: true });
     setListLabel('', '');
 
   }catch(e){
     console.error('ポイントデータ読み込み失敗:', e);
     ensureListLabel(); setListLabel('', '');
     renderResults([]);
-    ensureGraphPanel();
   }
 
   window.addEventListener('resize', ()=> isMapMode && refreshMapSize(60));
