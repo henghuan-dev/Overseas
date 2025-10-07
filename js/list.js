@@ -37,6 +37,7 @@ const getRegionPreset = (regionName) => {
 
 /* ===== ユーティリティ ===== */
 const DATA_URL = '../data/points.json';
+const HOME_VIEW = Object.freeze({ center: [20, 0], zoom: 3 });
 const $  = (s, r=document)=> r.querySelector(s);
 const toTitle = (t='') => t.replace(/\b\w/g, c => c.toUpperCase());
 const displayName = (s) => s?.kana ? s.kana : (s?.spot_name ? toTitle(s.spot_name) : toTitle((s?.file_name||'').replace(/-/g,' ')));
@@ -44,6 +45,7 @@ let ALL = [];
 let isMapMode = false;
 let sizeTimer = 0;
 let CURRENT_SPOT = null;
+const HOME_BUTTONS_BOUND = new WeakSet();
 
 function refreshMapSize(delay=60){
   clearTimeout(sizeTimer);
@@ -530,6 +532,53 @@ function initHeaderSearch(idx){
   form.addEventListener('submit', (e)=>{ if (e.isComposing) return; e.preventDefault(); closeSuggest(); });
   form.querySelector('.head-btn')?.addEventListener('click', (e)=>{ e.preventDefault(); closeSuggest(); });
 }
+function enterHomeView({ animateMap = true } = {}){
+  // 1) Globe 表示に戻して、結果リストをヒーローレイアウトへ
+  showGlobeOnly();
+
+  // 2) 地図の視点とレイヤーを初期位置にリセット
+  const map = getMapInstance?.();
+  if (map) {
+    try { map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: !!animateMap }); } catch(_){}
+  }
+  try { setPointMarkers([], {}); } catch(_){}
+  try { setCountryFlags(ALL, {
+    onClick: (region, spots) => {
+      const cc = (spots?.[0]?.country_code || '').toLowerCase();
+      gotoRegion(region, cc);
+    }
+  }); } catch(_){}
+
+  // 3) UI（ラベル・リスト・チャートヘッダ等）を初期化
+  setListLabel('', '');
+  setChartHead(null);
+  const host = document.getElementById('country-bar');
+  host?.querySelectorAll('.country-pill.is-active').forEach(btn => btn.classList.remove('is-active'));
+  renderResults(ALL.slice(0, 80), { autoOpenFirst: true });
+
+  // 4) レイアウト再計測
+  refreshMapSize(0);
+}
+
+function bindHomeButtons(){
+  const candidates = [
+    document.getElementById('back-to-globe-btn'),
+    document.querySelector('[data-map-home]'),
+    document.getElementById('map-home-btn'),
+    document.querySelector('.leaflet-control-home button'),
+  ].filter(Boolean);
+
+  candidates.forEach((btn)=>{
+    if (HOME_BUTTONS_BOUND.has(btn)) return;
+    HOME_BUTTONS_BOUND.add(btn);
+    btn.addEventListener('click', (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      enterHomeView({ animateMap:true });
+    });
+  });
+}
+
 
 /* ===== 起動 ===== */
 document.addEventListener('DOMContentLoaded', async ()=>{
@@ -548,8 +597,14 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   }
 
   // ★ map 初期化：Globeに戻る時の画面切替を list 側で担当
-  initMap('map', { center:[20,0], zoom:3, dark:false, onBackToGlobe: showGlobeOnly });
+  initMap('map', { ...HOME_VIEW, dark:false });
   showGlobeOnly();
+  bindHomeButtons();
+  setTimeout(()=> bindHomeButtons(), 0);
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(()=> bindHomeButtons());
+  }
+  setTimeout(()=> bindHomeButtons(), 500);
 
   try{
     const res = await fetch(DATA_URL, { cache:'no-store' });
