@@ -161,12 +161,12 @@
   width: calc(50px * 24); /* 24時間分のラベルに対応 */
 }
 
-.time-labels div {
+.time-labels > div {
   flex: 0 0 50px;
   width: 50px;
   text-align: center;
   font-size: 10px;
-  padding: 6px 0;
+  padding: 0;
   transition: background 0.3s;
   box-sizing: border-box;
 }
@@ -187,6 +187,35 @@
   background: rgba(0, 191, 255, 0.2);
   font-weight: bold;
   box-shadow: inset 0 -2px 0 #00bfff;
+}
+#timeLabels.time-labels > div > div{
+  margin: 0;
+  padding: 0 !important; /* 子孫指定の残りを殺す */
+  line-height: 12px;     /* 10〜12で調整、数字だけなら11–12が見やすい */
+  font-size: 11px;       /* 9〜11で調整 */
+}
+/* ===== タイムライン配色（ライトグレー＋太字） ===== */
+:root{
+  --timeline-pill-bg: #e0e0e0;   /* ライトグレー */
+  --timeline-pill-fg: #222;      /* 文字は濃いめ */
+}
+
+/* 日付：00の上だけ表示して塗りつぶし */
+#timeLabels .date-pill.is-visible{
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--timeline-pill-bg);
+  color: var(--timeline-pill-fg);
+  font-weight: 700;   /* 太字 */
+}
+
+/* 時刻：00だけ塗りつぶし */
+#timeLabels .hour-label.is-zero-hour{
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--timeline-pill-bg);
+  color: var(--timeline-pill-fg);
+  font-weight: 700;   /* 太字 */
 }
 
 /* ====== Overlay（Surfline風） ====== */
@@ -330,6 +359,9 @@
   .forecast-block canvas { height: 50px; }
   .time-labels { font-size: 8px; }
 }
+
+
+
   </style>
 </head>
 <body>
@@ -378,8 +410,8 @@
        ※ 同じディレクトリに dataLoader.js / draw.js がある前提
   -->
   <script type="module">
-    import { loadSurfData } from './js/dataLoader.js';
-    import { setData, drawAllCharts } from './js//draw.js?v=0.2';
+    import { loadSurfData } from './js/dataLoader_kitaizumi.js';
+    import { setData, drawAllCharts } from './js/draw_kitaizumi.js?v=0.2';
 
     /** クエリ文字列を取得 ?csv=... */
     function getCsvFromQuery(defaultPath) {
@@ -390,7 +422,7 @@
 
     async function initChart() {
       // 既定CSV（必要に応じて任意のスポットCSVに変更）
-      const defaultCsv = './data/584204204e65fad6a7709981.csv'; // 鵠沼4k（例）
+      const defaultCsv = './data/584204204e65fad6a7709704.csv'; // 鵠沼4k（例）
       const csvPath = getCsvFromQuery(defaultCsv);
 
       try {

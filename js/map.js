@@ -267,7 +267,7 @@ function toggleTheme(){
 }
 
 /** 任意の中心半径へズーム */
-export function zoomToRadius(latlng, radiusKm = 100, { animate = true } = {}) {
+export function zoomToRadius(latlng, radiusKm = 60, { animate = true } = {}) {
   if (!map) return;
   const lat = latlng.lat, lng = latlng.lng;
   const earthRadius = 6371; // km
@@ -376,9 +376,9 @@ export function fitToPoints(
     animate   = true,
     padding   = [24, 24],
     duration  = 0.7,
-    maxZoom   = 11,
+    maxZoom   = 13,
     snapSingle= true,
-    singleZoom= 10
+    singleZoom= 13
   } = {}
 ){
   const ll = _toLatLngs(points);
@@ -396,7 +396,7 @@ export function fitToPoints(
 
 export function focusSinglePoint(
   s,
-  zoom = 10,
+  zoom = 12.5,
   {
     animate   = true,
     duration  = 0.7,

@@ -65,7 +65,7 @@ html,body{
 }
 img{ max-width:100%; height:auto; display:block; }
 [hidden]{ display:none !important; }
-.page-wrap{ max-width: var(--wrap); margin: 0 auto; padding: 0 20px 24px }
+.page-wrap{ max-width: var(--wrap); margin: 0 auto; padding: 0 }
 
 /* 宇宙背景レイヤー */
 body::before,
@@ -581,6 +581,19 @@ body::after{
    [Alt Chart（PC=chart_iframe.html / SP=chart-sp）]
    ----------------------------------------- */
 .alt-chart-pane #chart-host{ width:100%; }
+.chart-head{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:16px; padding:12px 16px; border:1px solid var(--line,#1e2630);
+  background: var(--panel,#0f141b); border-radius:12px; margin-bottom:12px;
+}
+.chart-head-left{ display:flex; align-items:center; gap:10px; min-width:0; }
+.chart-title{ margin:0; font-size:16px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#chart-flag .flag-icon{ display:inline-block; }
+.ch-btn{
+  border:1px solid var(--line,#1e2630); background:transparent; color:inherit;
+  padding:8px 12px; border-radius:10px; font-size:14px; cursor:pointer;
+}
+.ch-btn:hover{ border-color: var(--accent,#35c6ff); }
 
 /* PC: chart_iframe.html を表示 */
 #chart-pc{

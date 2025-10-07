@@ -86,11 +86,9 @@
 
     <!-- ========== 広告バナー（任意） ========== -->
     <section class="banner-box" aria-label="広告バナー">
-      <!-- 例：
       <a href="#" target="_blank" rel="noopener">
-        <img src="img/banner_sample.jpg" alt="バナー" loading="lazy" decoding="async">
+        <img src="img/Lasik_1200x300-from2025-0519.jpg" alt="バナー" loading="lazy" decoding="async">
       </a>
-      -->
     </section>
 
     <!-- 国名横スクロールバー -->
@@ -130,12 +128,22 @@
 
     <!-- ========== もう一つのグラフ：PC=chart_iframe.html / SP=指定iframe ========== -->
     <section class="pane alt-chart-pane" aria-label="ポイント別チャート">
+      <div id="chart-head" class="chart-head" aria-live="polite">
+        <div class="chart-head-left">
+          <span id="chart-flag" class="flag-icon" aria-hidden="true"></span>
+          <h3 id="chart-title" class="chart-title">ポイント未選択</h3>
+        </div>
+        <div class="chart-head-actions">
+          <button type="button" id="btn-graph" class="ch-btn" title="グラフへ">Graph</button>
+          <button type="button" id="btn-guide" class="ch-btn" title="ガイドを表示">Guide</button>
+        </div>
+      </div>
       <div id="chart-host">
         <!-- PC側（同階層に chart_iframe.html がある前提。異なる場合はパスを調整） -->
         <iframe
           id="chart-pc"
           title="ポイントチャート（PC）"
-          src="./chart_iframe.html"
+          src="../chart_kitaizumi.html"
           loading="lazy"
           allowfullscreen
         ></iframe>
@@ -163,6 +171,15 @@
         ></iframe>
       </div>
     </section>
+    <div id="guide-modal" hidden style="position:fixed;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.4);z-index:9999;">
+      <div style="max-width:720px;width:clamp(300px,90vw,720px);background:var(--panel,#0f141b);border:1px solid var(--line,#1e2630);border-radius:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--line,#1e2630);">
+          <strong id="guide-title">Guide</strong>
+          <button type="button" id="guide-close" class="ch-btn">閉じる</button>
+        </div>
+        <div id="guide-body" style="padding:14px; max-height:60vh; overflow:auto; line-height:1.6;"></div>
+      </div>
+    </div>
 
     <!-- ========== アドセンス枠（箱だけ用意） ========== -->
     <section class="adsense-box" id="adsense" aria-label="広告枠">
