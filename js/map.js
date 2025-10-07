@@ -1,28 +1,36 @@
 // js/map.js
 // Carto Voyager / Carto Dark を使った“モダンUI”版（緑色マーカー対応）
-// - ズーム＋/−、ホーム、ダーク切替、自前UI（右上で縦配置。Globeボタンの下に自動調整）
-// - 国旗⇄ポイント切替は従来どおり
-// - ポイントのマーカーは layers.js の makeGreenMarkerIcon() を使用
+// - ズーム＋/−、ホーム、ダーク切替（右上に縦配置）
+// - 「Globeに戻る」ボタン（data-ui="back-to-globe"）を自動検出して確実に動作
+// - 国旗⇄ポイント切替はズーム閾値で自動
+// - layers.js の makeGreenMarkerIcon()/makeFlagIcon() を使用
 
 import { createClusterOptions, makeFlagIcon, makeGreenMarkerIcon } from './layers.js?v=0.1';
 
 let map, cluster, flagLayer;
-let worldBounds = null;   // ← 直近選択国の重心群
-let homeBounds = null;
+let worldBounds = null;   // すべての国旗重心の外接境界（setCountryFlags完了後に確定）
+let homeBounds  = null;   // 直近の国や領域を示す境界（updateHomeTargetで更新）
+
 const DEFAULT_CENTER = [28, 28];
 const DEFAULT_ZOOM   = 1.8;
 const CUSTOM_ZOOM_STEPS = Object.freeze([2, 3.5, 5, 6.5, 8, 9.5, 11, 12.5, 14, 16, 18]);
 const ZOOM_EPSILON = 1e-3;
+
 let basemapLight, basemapDark, currentTheme = 'light';
 let scaleControl = null;
 const POINT_ZOOM_THRESHOLD = 5;
 
-/**
+// 「Globeに戻る」時にページ側へ教えるためのコールバック
+let onBackToGlobe = null;
+
+/** =========================
  * マップ初期化
- */
-export function initMap(domId = 'map', { center = [20, 0], zoom = 8, dark = false } = {}) {
+ * ========================= */
+export function initMap(domId = 'map', { center = [20, 0], zoom = 8, dark = false, onBackToGlobe: cb } = {}) {
   const minZoom = Math.min(DEFAULT_ZOOM, zoom, ...CUSTOM_ZOOM_STEPS);
   const maxZoom = Math.max(zoom, ...CUSTOM_ZOOM_STEPS, 20);
+
+  onBackToGlobe = typeof cb === 'function' ? cb : null;
 
   map = L.map(domId, {
     scrollWheelZoom: true,
@@ -49,7 +57,7 @@ export function initMap(domId = 'map', { center = [20, 0], zoom = 8, dark = fals
   cluster   = L.markerClusterGroup(createClusterOptions());
   map.addLayer(cluster);
 
-  // 初期は国旗のみ表示
+  // 初期は国旗のみ
   map.removeLayer(cluster);
   map.addLayer(flagLayer);
 
@@ -60,10 +68,76 @@ export function initMap(domId = 'map', { center = [20, 0], zoom = 8, dark = fals
   // ズームで国旗⇄ポイント切替
   map.on('zoomend', toggleLayersByZoom);
 
-  // 右上に自前UI（縦）を重ねる
+  // 自前UI（右上）を注入
   injectModernControls(domId);
 
+  // 「Globeに戻る」ボタンを確実にバインド
+  bindBackToGlobeButton(domId);
+
   return { map, cluster, flagLayer };
+}
+
+/** =========================
+ * Globeに戻る（イベント本体）
+ * ========================= */
+function handleBackToGlobe() {
+  try {
+    // 1) ページ側に通知（Globe表示へ切替してもらう）
+    if (typeof onBackToGlobe === 'function') onBackToGlobe();
+  } catch(_) {}
+
+  try {
+    // 2) マップ側は国旗レイヤに戻し、視点をワールド or ホーム境界へ
+    if (!map) return;
+
+    // レイヤ状態を国旗モードへ復帰
+    if (!map.hasLayer(flagLayer)) map.addLayer(flagLayer);
+    if (map.hasLayer(cluster))    map.removeLayer(cluster);
+
+    // 先にcenterだけ寄せ、次にズーム確定（慣性で止まりづらくする）
+    const WORLD_CENTER = L.latLng(DEFAULT_CENTER[0], DEFAULT_CENTER[1]);
+    const WORLD_ZOOM   = DEFAULT_ZOOM;
+
+    // 直近ホーム or ワールド境界がある場合は境界優先
+    const targetBounds = homeBounds || worldBounds;
+
+    if (targetBounds) {
+      map.flyToBounds(targetBounds, { animate:true, duration:0.6, padding:[32,32] });
+    } else {
+      // 境界が未設定なら center→zoom の2段階
+      map.flyTo(WORLD_CENTER, map.getZoom(), { duration: .35, easeLinearity: .8 });
+      setTimeout(() => {
+        map.flyTo(WORLD_CENTER, WORLD_ZOOM, { duration: .45, easeLinearity: .9 });
+      }, 180);
+    }
+  } catch(_) {}
+}
+
+/** 「Globeに戻る」ボタンのセレクタを一元化して確実に拾う */
+function bindBackToGlobeButton(hostId) {
+  const host = document.getElementById(hostId) || document;
+  const q = () => host.querySelector('[data-ui="back-to-globe"]');
+
+  const attach = () => {
+    const btn = q();
+    if (!btn) return;
+
+    // 二重登録防止
+    if (btn._backBound) return;
+    btn._backBound = true;
+
+    // クリック/タッチ双方に対応
+    btn.addEventListener('click', handleBackToGlobe);
+    btn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      handleBackToGlobe();
+    }, { passive:false });
+  };
+
+  attach();
+
+  // DOM動的変化にも追従
+  new MutationObserver(attach).observe(host, { childList:true, subtree:true, attributes:true });
 }
 
 /** 国旗⇄ポイントの表示切替 */
@@ -79,7 +153,7 @@ function toggleLayersByZoom() {
   }
 }
 
-/** カスタム等倍ズームのための補助 */
+/** ========= ズーム段階ユーティリティ ========= */
 function getSortedZoomLevels() {
   const levels = new Set(CUSTOM_ZOOM_STEPS);
   levels.add(DEFAULT_ZOOM);
@@ -128,7 +202,10 @@ function resolveNextZoomLevel(current, direction) {
 }
 function stepZoom(direction) {
   const target = resolveNextZoomLevel(map?.getZoom?.(), direction);
-  if (Number.isFinite(target)) map.setZoom(target, { animate: true });
+  if (!Number.isFinite(target)) return;
+  // setZoom だけでなく flyTo も使い分けて途中停止を回避
+  const c = map.getCenter();
+  map.flyTo(c, target, { duration: .35, easeLinearity: .9 });
 }
 
 /** ───── 自前UI（右上・縦配置。Globeボタンの下に追従） ───── */
@@ -136,11 +213,11 @@ function injectModernControls(hostId){
   const host = document.getElementById(hostId);
   if (!host) return;
 
-  // ← ここで「さらに下に」ずらす量をまとめて調整（必要なら値を大きく）
+  // 「Globeに戻る」ボタンからの間隔（px）
   const MAP_TOOLS_MARGIN_BELOW_GLOBE =
     (window && window.MAP_TOOLS_MARGIN_BELOW_GLOBE) ?? 80;
 
-  // 衝突回避：list.js の .map-controls とは別ID/クラス
+  // ラッパ
   let wrap = host.querySelector('#map-tools');
   if (!wrap){
     wrap = document.createElement('div');
@@ -157,11 +234,11 @@ function injectModernControls(hostId){
     host.appendChild(wrap);
   }
 
-  // 見た目/位置/層を強制（CSS衝突を避ける）
+  // 見た目/位置/層
   Object.assign(wrap.style, {
     position: 'absolute',
     right: '12px',
-    top: `${MAP_TOOLS_MARGIN_BELOW_GLOBE}px`, // 初期値。後で正確に再配置
+    top: `${MAP_TOOLS_MARGIN_BELOW_GLOBE}px`,
     zIndex: '650',
     display: 'flex',
     flexDirection: 'column',
@@ -204,7 +281,6 @@ function injectModernControls(hostId){
         wrap.style.top = `${MAP_TOOLS_MARGIN_BELOW_GLOBE}px`;
         return;
       }
-      // 位置計算を getBoundingClientRect 基準にして、親子関係の差異に強くする
       const hostRect = host.getBoundingClientRect();
       const rect     = backWrap.getBoundingClientRect();
       const topPx = (rect.bottom - hostRect.top) + MAP_TOOLS_MARGIN_BELOW_GLOBE;
@@ -226,14 +302,16 @@ function injectModernControls(hostId){
       case 'zoom-in':  stepZoom(1); break;
       case 'zoom-out': stepZoom(-1); break;
       case 'home': {
+        // 国旗表示へ復帰
         if (!map.hasLayer(flagLayer)) map.addLayer(flagLayer);
         if (map.hasLayer(cluster))    map.removeLayer(cluster);
+
         if (homeBounds) {
           map.flyToBounds(homeBounds, { animate:true, duration:0.6, padding:[32,32] });
         } else if (worldBounds) {
           map.flyToBounds(worldBounds, { animate:true, duration:0.6, padding:[32,32] });
         } else {
-          map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate:true, duration:0.6 });
+          map.flyTo(L.latLng(DEFAULT_CENTER[0], DEFAULT_CENTER[1]), DEFAULT_ZOOM, { animate:true, duration:0.6 });
         }
         break;
       }
@@ -242,10 +320,9 @@ function injectModernControls(hostId){
   });
 }
 
-
-/**
+/** =========================
  * 直近選択した国のポイント配列から「ホーム」境界を設定
- */
+ * ========================= */
 export function updateHomeTarget(points=[]){
   const coords = points
     .map(s => [parseFloat(s.lat), parseFloat(s.lng)])
@@ -253,6 +330,7 @@ export function updateHomeTarget(points=[]){
   homeBounds = coords.length ? L.latLngBounds(coords) : null;
 }
 
+/** テーマ切替 */
 function toggleTheme(){
   if (!map) return;
   if (currentTheme === 'light'){
@@ -266,7 +344,7 @@ function toggleTheme(){
   }
 }
 
-/** 任意の中心半径へズーム */
+/** 任意の中心半径へズーム（領域フォーカス） */
 export function zoomToRadius(latlng, radiusKm = 60, { animate = true } = {}) {
   if (!map) return;
   const lat = latlng.lat, lng = latlng.lng;
@@ -279,7 +357,9 @@ export function zoomToRadius(latlng, radiusKm = 60, { animate = true } = {}) {
   map.fitBounds(bounds, { animate, padding: [24,24] });
 }
 
-/** ───── データ描画系 ───── */
+/** =========================
+ * データ描画系：国旗レイヤ
+ * ========================= */
 export function setCountryFlags(points, { onClick } = {}) {
   flagLayer.clearLayers();
   const byRegion = {};
@@ -314,11 +394,15 @@ export function setCountryFlags(points, { onClick } = {}) {
       onClick?.(region, spots);
     });
   });
+
+  // 世界外接境界を更新（Homeが未設定時のフォールバックに使う）
   worldBounds = flagPositions.length ? L.latLngBounds(flagPositions) : null;
 }
 
+/** =========================
+ * データ描画系：ポイント（クラスター）レイヤ
+ * ========================= */
 export function setPointMarkers(points, { onClick } = {}) {
-  // 安全な文字列化（XSS対策）
   const esc = (v = '') =>
     String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -420,10 +504,10 @@ export function focusSinglePoint(
 
 export function getMapInstance() { return map; }
 
-/* ===== ヘルパ ===== */
-function displayName(s) {
-  if (s.kana)      return s.kana;
-  if (s.spot_name) return toTitle(s.spot_name);
-  return 'Unknown';
+/** 任意：後から戻るハンドラを差し替えたい場合に使用 */
+export function setBackToGlobeHandler(fn){
+  onBackToGlobe = (typeof fn === 'function') ? fn : null;
 }
+
+/* ===== ヘルパ ===== */
 function toTitle(t=''){ return t.replace(/\b\w/g, c => c.toUpperCase()); }

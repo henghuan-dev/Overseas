@@ -109,10 +109,15 @@
         <div id="map" class="is-hidden" role="application" aria-label="サーフポイント地図"></div>
 
         <!-- 左ペインのオーバーレイ（Map時のみ「Globeに戻る」を表示） -->
-        <div class="viewbar" aria-hidden="false">
+        <div class="viewbar map-controls" aria-hidden="false">
           <span id="map-region-label" class="map-region-label" aria-live="polite"></span>
-          <button type="button" id="back-to-globe-btn" class="back-pill">🌍 Globeに戻る</button>
-        </div>
+          <button
+            type="button"
+            id="back-to-globe-btn"
+            class="back-pill"
+            data-ui="back-to-globe"
+          >🌍 Globeに戻る</button>
+         </div>
 
         <!-- Globeヒント（Globe時のみ表示） -->
         <div class="globe-hint" aria-hidden="true">
@@ -195,6 +200,6 @@
   </script>
 
   <!-- アプリJS（points_list 用） -->
-  <script type="module" src="js/list.js"></script>
+  <script type="module" src="js/list.js?v=0.1"></script>
 </body>
 </html>

@@ -1,52 +1,32 @@
-// js/list.js — 統一遷移 & プリセット近傍フィット版
+// js/list.js — 統一遷移 & プリセット近傍フィット版（map.js v“back-to-globe対応”前提）
 
 import {
   initMap, setCountryFlags, setPointMarkers, focusSinglePoint, fitToPoints,
   getMapInstance, zoomToRadius, updateHomeTarget
-} from './map.js';
+} from './map.js?v=0.1';
 
-/* ===== Region presets（center + radiusKm + maxZoom） =====
-   ※ alias（英語表記）も吸収して、どの経路からも確実にヒットさせる */
+/* ===== Region presets（center + radiusKm + maxZoom） ===== */
 const REGION_PRESETS = {
-  // ハワイ（米本土に引っ張られないように諸島中心）
-  'ハワイ':   { center:[20.8, -156.3], radiusKm: 450, maxZoom: 6 },
-  'hawaii':  { center:[20.8, -156.3], radiusKm: 450, maxZoom: 6 },
-
-  // オーストラリア（広域）
+  'ハワイ':   { center:[20.8, -156.3], radiusKm: 450,  maxZoom: 6 },
+  'hawaii':  { center:[20.8, -156.3], radiusKm: 450,  maxZoom: 6 },
   'オーストラリア': { center:[-25.0, 134.0], radiusKm: 2200, maxZoom: 4 },
   'australia':     { center:[-25.0, 134.0], radiusKm: 2200, maxZoom: 4 },
-
-  // インドネシア（主に観光圏）
-  'インドネシア': { center:[-8.5, 115.1], radiusKm: 900, maxZoom: 6 },
-  'indonesia':   { center:[-8.5, 115.1], radiusKm: 900, maxZoom: 6 },
-
-  // スリランカ
+  'インドネシア': { center:[-8.5, 115.1], radiusKm: 900,  maxZoom: 6 },
+  'indonesia':   { center:[-8.5, 115.1], radiusKm: 900,  maxZoom: 6 },
   'スリランカ': { center:[6.125, 80.105], radiusKm: 320, maxZoom: 7 },
   'sri lanka': { center:[6.125, 80.105], radiusKm: 320, maxZoom: 7 },
-
-  // 台湾
   '台湾':      { center:[23.6978, 120.9605], radiusKm: 260, maxZoom: 7 },
   'taiwan':    { center:[23.6978, 120.9605], radiusKm: 260, maxZoom: 7 },
-
-  // フランス（本土。海外領に引っ張られないようメトロポリタン中心）
-  'フランス':  { center:[46.5, 2.5], radiusKm: 650, maxZoom: 6 },
-  'france':    { center:[46.5, 2.5], radiusKm: 650, maxZoom: 6 },
-
-  // フィリピン
+  'フランス':  { center:[46.5, 2.5],       radiusKm: 650, maxZoom: 6 },
+  'france':    { center:[46.5, 2.5],       radiusKm: 650, maxZoom: 6 },
   'フィリピン': { center:[12.8797, 121.7740], radiusKm: 750, maxZoom: 6 },
   'philippines':{ center:[12.8797, 121.7740], radiusKm: 750, maxZoom: 6 },
-
-  // ベトナム
-  'ベトナム':   { center:[16.2, 107.9], radiusKm: 600, maxZoom: 6 },
-  'vietnam':    { center:[16.2, 107.9], radiusKm: 600, maxZoom: 6 },
-
-  // 中国（控えめ）
-  '中国':       { center:[35.0, 103.0], radiusKm: 1500, maxZoom: 5 },
-  'china':      { center:[35.0, 103.0], radiusKm: 1500, maxZoom: 5 },
-
-  // 韓国
-  '韓国':       { center:[36.5, 127.9], radiusKm: 300, maxZoom: 7 },
-  'korea':      { center:[36.5, 127.9], radiusKm: 300, maxZoom: 7 },
+  'ベトナム':   { center:[16.2, 107.9],    radiusKm: 600, maxZoom: 6 },
+  'vietnam':    { center:[16.2, 107.9],    radiusKm: 600, maxZoom: 6 },
+  '中国':       { center:[35.0, 103.0],    radiusKm: 1500,maxZoom: 5 },
+  'china':      { center:[35.0, 103.0],    radiusKm: 1500,maxZoom: 5 },
+  '韓国':       { center:[36.5, 127.9],    radiusKm: 300, maxZoom: 7 },
+  'korea':      { center:[36.5, 127.9],    radiusKm: 300, maxZoom: 7 },
 };
 const normKey = (s='') => String(s).normalize('NFKC').toLowerCase().replace(/\s+/g,'');
 const getRegionPreset = (regionName) => {
@@ -73,6 +53,7 @@ const sleep = (ms)=> new Promise(r=>setTimeout(r,ms));
 const isSP = ()=> window.innerWidth <= 768;
 const scrollToListIfSP = ()=> { if (isSP()) ($('#results')||$('#results-hero'))?.scrollIntoView({ behavior:'smooth', block:'start' }); };
 const scrollToChartIfSP = ()=> { if (isSP()) $('#chart-host')?.scrollIntoView({ behavior:'smooth', block:'start' }); };
+
 function setMapRegionLabel(regionText = '', flagCode = ''){
   const el = document.getElementById('map-region-label'); if (!el) return;
   if (!regionText) { el.innerHTML=''; return; }
@@ -92,7 +73,8 @@ function setChartHead(spot){
 
 /* ===== surf(min/max)（CSV最優先） ===== */
 const CSV_BASE = (() => DATA_URL.replace(/[#?].*$/,'').replace(/[^/]+$/,''))();
-const TEST_CSV_ID = '584204204e65fad6a7709981';
+// 本番は空。デバッグで固定CSVを使いたい時だけIDを入れる
+const TEST_CSV_ID = '';
 const SURF_CACHE = new Map(), CSV_TEXT_CACHE = new Map();
 const CSV_CANDIDATES = (id)=>{ const urls=[]; if (TEST_CSV_ID) urls.push(`${CSV_BASE}${TEST_CSV_ID}.csv`); if (id) urls.push(`${CSV_BASE}${encodeURIComponent(id)}.csv`); return urls; };
 const getSpotId = (s)=> s?.spotid||s?.spot_id||s?.spotId||s?.surfline_spot_id||s?.surflineSpotId||s?.id||s?.file_name||'';
@@ -193,8 +175,25 @@ function setListLabel(regionText='', flagCode=''){
   const flag = flagCode ? `<span class="flag-icon flag-icon-${flagCode} flag-icon-squared" style="margin-right:8px"></span>` : '';
   label.innerHTML = `${flag}<span class="label-text">${regionText}</span>`;
 }
-function showGlobeOnly(){ $('#globe')?.classList.remove('is-hidden'); $('#map')?.classList.add('is-hidden'); $('#left-switch')?.classList.remove('map-mode'); isMapMode=false; setMapRegionLabel('', ''); }
-function showMapOnly(){  $('#globe')?.classList.add('is-hidden'); $('#map')?.classList.remove('is-hidden'); $('#left-switch')?.classList.add('map-mode'); isMapMode=true; refreshMapSize(120); }
+function showGlobeOnly(){
+  $('#globe')?.classList.remove('is-hidden');
+  $('#map')?.classList.add('is-hidden');
+  $('#left-switch')?.classList.remove('map-mode');
+  isMapMode=false;
+  setMapRegionLabel('', '');
+  setListLabel('', '');
+  setChartHead(null);
+  // 初期表示（ALLの先頭少量）
+  renderResults(ALL.slice(0,80), { autoOpenFirst:true });
+  refreshMapSize(0);
+}
+function showMapOnly(){
+  $('#globe')?.classList.add('is-hidden');
+  $('#map')?.classList.remove('is-hidden');
+  $('#left-switch')?.classList.add('map-mode');
+  isMapMode=true;
+  refreshMapSize(120);
+}
 
 /* ===== リスト ===== */
 function getResultsHost(){ return !isMapMode ? (document.getElementById('results-hero') || document.getElementById('results')) : document.getElementById('results'); }
@@ -249,11 +248,10 @@ function haversineKm(a, b){
   return 2*R*Math.asin(Math.min(1, Math.sqrt(aa)));
 }
 
-/* ===== 国 → マップへ（完全統一の入口） ===== */
+/* ===== 国 → マップへ（統一入口） ===== */
 function gotoRegion(regionName, flagCode=''){
   const spotsAll = ALL.filter(s => normKey(s.region) === normKey(regionName));
 
-  // 右リスト＆ラベル／見出し
   renderResults(spotsAll, { autoOpenFirst:true });
   setListLabel(regionName, flagCode);
   showMapOnly(); setMapRegionLabel(regionName, flagCode); setChartHead(spotsAll[0] || null);
@@ -265,7 +263,7 @@ function gotoRegion(regionName, flagCode=''){
     setMapRegionLabel((s.region||'').trim(), (s.country_code||'').toLowerCase()); setChartHead(s); scrollToChartIfSP();
   }});
 
-  // —— 統一ズーム：プリセット中心 → 近傍点のみで fit（海外領・離島に引っ張られない）
+  // —— プリセット中心→近傍fit
   try{
     const valid = spotsAll.filter(p => Number.isFinite(+p.lat) && Number.isFinite(+p.lng));
     if (!valid.length) return;
@@ -273,19 +271,16 @@ function gotoRegion(regionName, flagCode=''){
     const preset = getRegionPreset(regionName);
     if (preset?.center && preset?.radiusKm){
       const center = { lat:preset.center[0], lng:preset.center[1] };
-      zoomToRadius(center, preset.radiusKm);                 // 心地よい寄り先へ
-      // プリセット近傍（半径×1.25）だけ残して fit。海外領などを除外
+      zoomToRadius(center, preset.radiusKm);
       const keep = valid.filter(p => haversineKm(center, {lat:+p.lat, lng:+p.lng}) <= preset.radiusKm * 1.25);
       if (keep.length === 1){
         focusSinglePoint(keep[0], 12.5);
       }else if (keep.length >= 2){
         fitToPoints(keep, { animate:true, maxZoom: preset.maxZoom ?? 7, padding:[40,40] });
       }else{
-        // 近傍が無かったら（データ上の理由等）全体で控えめに収束
         fitToPoints(valid, { animate:true, maxZoom: preset?.maxZoom ?? 6, padding:[60,60] });
       }
     }else{
-      // フォールバック：従来どおり全体で fit
       if (valid.length === 1) focusSinglePoint(valid[0], 12.5);
       else fitToPoints(valid, { animate:true, maxZoom:7, padding:[40,40] });
     }
@@ -535,36 +530,6 @@ function initHeaderSearch(idx){
   form.addEventListener('submit', (e)=>{ if (e.isComposing) return; e.preventDefault(); closeSuggest(); });
   form.querySelector('.head-btn')?.addEventListener('click', (e)=>{ e.preventDefault(); closeSuggest(); });
 }
-// ★ list.js 内（gotoRegion の近くなどに追加）
-// ★ 既存 enterHomeView があれば置き換え／無ければ追加
-function enterHomeView(){
-  // 1) 純粋に地図の視点だけ戻す
-  const map = getMapInstance?.();
-  if (map) {
-    try { map.setView(HOME_VIEW.center, HOME_VIEW.zoom, { animate: true }); } catch(_){}
-  }
-
-  // 2) 既存ピンを消す（白画面の原因を排除）
-  try { setPointMarkers([], {}); } catch(_){}
-
-  // 3) UI初期化（ラベル・ヘッダ・リスト）
-  setMapRegionLabel('', '');
-  setListLabel('', '');
-  setChartHead(null);
-  renderResults(ALL.slice(0, 80), { autoOpenFirst: true });
-
-  // 4) 国旗クリック → gotoRegion の配線（国旗レイヤが常駐なら省略可）
-  setCountryFlags(ALL, {
-    onClick: (region, spots) => {
-      const cc = (spots?.[0]?.country_code || '').toLowerCase();
-      gotoRegion(region, cc);
-    }
-  });
-
-  // レイアウト安定化
-  refreshMapSize(0);
-}
-
 
 /* ===== 起動 ===== */
 document.addEventListener('DOMContentLoaded', async ()=>{
@@ -582,7 +547,8 @@ document.addEventListener('DOMContentLoaded', async ()=>{
     $('#guide-modal')?.addEventListener('click', (e)=>{ if (e.target.id==='guide-modal') e.currentTarget.hidden=true; });
   }
 
-  initMap('map', { center:[20,0], zoom:3, dark:false });
+  // ★ map 初期化：Globeに戻る時の画面切替を list 側で担当
+  initMap('map', { center:[20,0], zoom:3, dark:false, onBackToGlobe: showGlobeOnly });
   showGlobeOnly();
 
   try{
@@ -591,7 +557,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
 
     buildCountryBar(ALL);
 
-    // 地図UIの「国旗レイヤー」クリック → 完全統一ルート
+    // 地図の国旗クリック → 統一ルート
     setCountryFlags(ALL, {
       onClick: (region, spots) => {
         const cc = (spots?.[0]?.country_code || '').toLowerCase();
@@ -599,30 +565,15 @@ document.addEventListener('DOMContentLoaded', async ()=>{
       }
     });
 
-    // HOMEボタン → 世界地図へ（国旗クリックは上の setCountryFlags と同じ gotoRegion を使用）
-    const homeBtn =
-      document.querySelector('[data-map-home]') ||
-      document.getElementById('map-home-btn') ||
-      document.querySelector('.leaflet-control-home button');
-
-    if (homeBtn){
-      homeBtn.addEventListener('click', (e)=>{
-        e.preventDefault();
-        e.stopPropagation();
-        // Mapを表示してからHOME（SPでも白化しにくい）
-        showMapOnly();
-        enterHomeView();
-      });
-    }
-
     const idx = buildSearchIndex(ALL);
     initHeaderSearch(idx);
 
     await renderGlobe();
 
+    // 初期リスト
     renderResults(ALL.slice(0,80), { autoOpenFirst:true });
     setListLabel('', '');
-    setChartHead(ALL[0] || null);
+    setChartHead(null);
 
   }catch(e){
     console.error('ポイントデータ読み込み失敗:', e);
