@@ -1,165 +1,167 @@
-// dataLoader.js — 48hウィンドウ or 固定日付ウィンドウ（JST）
-// 既存の戻り値フィールドは維持（hour, waveHeight, tide, windSpeed など）
+// dataLoader_kitaizumi.js — ローダは“常にフル期間”を返す（フィルタはオプション）
+// 返却フィールドは既存互換：timestamp(UTC ISO), hour, waveHeight, tide, windSpeed(m/s),
+// windAngle, windDirectionType, temp, weatherIcon, swells[], waveHeightDisplay(1桁)
 
-/* ===== 設定：固定ウィンドウを使うか？ =====
-   enabled=true: JSTで startJST〜endJST のみ通す
-   enabled=false: 従来の「今日から48h」を使用 */
-const FIXED_WINDOW = {
-  enabled: true,
-  startJST: { y: 2025, m: 10, d: 7 }, // 2025/10/07 00:00 JST から
-  endJST:   { y: 2025, m: 10, d: 9 }, // 2025/10/09 00:00 JST まで（10/8を含む）
-};
-
-// ---- swells(JSON文字列) を安全に配列へ ----
-function parseSwellsField(raw) {
-  if (!raw) return [];
-  let t = String(raw).trim();
-  if (t.startsWith('"') && t.endsWith('"')) t = t.slice(1, -1);
-  t = t.replace(/&quot;/g, '"').replace(/\\"/g, '"').replace(/""/g, '"');
-  try { const arr = JSON.parse(t); return Array.isArray(arr) ? arr : []; } catch {}
-  try {
-    const fixed = t.replace(/([{,]\s*)'([^']+?)'(\s*:)/g, '$1"$2"$3')
-                   .replace(/:\s*'([^']*)'/g, ':"$1"');
-    const arr = JSON.parse(fixed);
-    return Array.isArray(arr) ? arr : [];
-  } catch { return []; }
-}
+/* ================= ユーティリティ ================= */
 
 // 角括弧/波括弧の中にあるカンマでは分割しない安全なスプリッタ
 function smartSplit(line) {
-  const out = []; let cur = ""; let depth = 0;
+  const out = []; let cur = ""; let depth = 0; let inQuotes = false;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
-    if (ch === "[" || ch === "{") { depth++; cur += ch; continue; }
-    if (ch === "]" || ch === "}") { depth = Math.max(0, depth - 1); cur += ch; continue; }
-    if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    if (ch === '"' && line[i - 1] !== '\\') { inQuotes = !inQuotes; cur += ch; continue; }
+    if (!inQuotes) {
+      if (ch === "[" || ch === "{") { depth++; cur += ch; continue; }
+      if (ch === "]" || ch === "}") { depth = Math.max(0, depth - 1); cur += ch; continue; }
+      if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    }
     cur += ch;
   }
   out.push(cur);
   return out;
 }
 
+// 両端のダブルクォートを剥がす
+function unquote(s) {
+  if (s == null) return "";
+  const t = String(s).trim();
+  return (t.startsWith('"') && t.endsWith('"')) ? t.slice(1, -1) : t;
+}
+
 // 小数1桁へ切り捨て
 function floorTo1(n) { if (!Number.isFinite(n)) return 0; return Math.floor(n * 10) / 10; }
 
-/* ===== JSTユーティリティ ===== */
-
-// JSTの日付を「対応するUTC時刻のDate」に変換（JST=UTC+9 → -9h）
+// JST→UTC Date（JST=UTC+9 → 時差 -9h）
 function jstToUTCDate(y, m, d, hh = 0, mm = 0, ss = 0) {
   return new Date(Date.UTC(y, m - 1, d, hh - 9, mm, ss, 0));
 }
 
-// "YYYY-MM-DD HH:mm:ss"（JST想定）→ 正しいUTC Date
+// "YYYY-MM-DD HH:mm:ss"（JST想定）→ UTC Date
 function parseTimestampAsJST(tsStr) {
-  const [datePart, timePart = "00:00:00"] = tsStr.trim().split(" ");
+  const [datePart, timePart = "00:00:00"] = String(tsStr).trim().split(" ");
   const [Y, M, D] = datePart.split("-").map(n => parseInt(n, 10));
   const [h, mi, s] = timePart.split(":").map(n => parseInt(n, 10));
   return jstToUTCDate(Y, M, D, h || 0, mi || 0, s || 0);
 }
 
-// 従来の「当日0:00〜+48h（翌日24:00未満）」判定:contentReference[oaicite:1]{index=1}
-function startOfTodayJST() {
-  const jstNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-  const y = jstNow.getFullYear();
-  const m = jstNow.getMonth();      // 0-11
-  const d = jstNow.getDate();
-  return new Date(Date.UTC(y, m, d, -9, 0, 0, 0));
-}
-function isWithin48hWindowJST(dateObj) {
-  const start = startOfTodayJST();
-  const end   = new Date(start.getTime() + 48 * 3600 * 1000);
-  return dateObj >= start && dateObj < end;
+// swells(JSON/疑似JSON/HTMLエスケープ) を安全に配列へ
+function parseSwellsField(raw) {
+  if (!raw) return [];
+  let t = unquote(String(raw))
+    .replace(/&quot;|&#34;/g, '"')
+    .replace(/\\"/g, '"')
+    .trim();
+
+  try {
+    const arr = JSON.parse(t);
+    return Array.isArray(arr) ? arr : [];
+  } catch {}
+
+  // 単一引用やキーにクォート無しの簡易補正
+  try {
+    const fixed = t
+      .replace(/([{,]\s*)'([^']+?)'(\s*:)/g, '$1"$2"$3') // 'key': → "key":
+      .replace(/:\s*'([^']*)'/g, ':"$1"')                 // : 'val' → :"val"
+      .replace(/([{,]\s*)([a-zA-Z_]\w*)(\s*:)/g, '$1"$2"$3'); // key: → "key":
+    const arr = JSON.parse(fixed);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
 }
 
-// ★ 固定ウィンドウ（JST）判定：10/7〜10/8 を通す（= 10/7 00:00 〜 10/9 00:00 未満）
-function isWithinFixedWindowJST(dateObj) {
-  const s = jstToUTCDate(FIXED_WINDOW.startJST.y, FIXED_WINDOW.startJST.m, FIXED_WINDOW.startJST.d, 0, 0, 0);
-  const e = jstToUTCDate(FIXED_WINDOW.endJST.y,   FIXED_WINDOW.endJST.m,   FIXED_WINDOW.endJST.d,   0, 0, 0);
-  return dateObj >= s && dateObj < e;
+/* ================= フィルタ（任意） ================= */
+
+// オプションで時間ウィンドウを指定できる。指定がなければ“全行”返す。
+function inWindow(ts, opt) {
+  if (!opt) return true;
+  const t = ts.getTime();
+
+  // 固定ウィンドウ（JST日付で指定）
+  if (opt.fixedWindowJST) {
+    const { startJST, endJST } = opt.fixedWindowJST;
+    if (startJST && endJST) {
+      const s = jstToUTCDate(startJST.y, startJST.m, startJST.d, startJST.hh || 0, startJST.mm || 0, 0).getTime();
+      const e = jstToUTCDate(endJST.y,   endJST.m,   endJST.d,   endJST.hh   || 0, endJST.mm   || 0, 0).getTime();
+      return t >= s && t < e;
+    }
+  }
+
+  // “今日のJST 0:00 から hours 分だけ”
+  if (Number.isFinite(opt.windowHours) && opt.windowHours > 0) {
+    const jstNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+    const baseUTC = Date.UTC(jstNow.getFullYear(), jstNow.getMonth(), jstNow.getDate(), -9, 0, 0, 0);
+    const start = baseUTC;
+    const end   = baseUTC + opt.windowHours * 3600 * 1000;
+    return t >= start && t < end;
+  }
+
+  return true;
 }
 
-// 実際に使うウィンドウ判定（トグル可能）
-function isWithinTargetWindow(dateObj) {
-  return FIXED_WINDOW.enabled ? isWithinFixedWindowJST(dateObj) : isWithin48hWindowJST(dateObj);
-}
+/* ================= メイン ================= */
 
-export async function loadSurfData(csvPath) {
-  const res = await fetch(csvPath);
+export async function loadSurfData(csvPath, options = {}) {
+  const fetchOpts = options.fetchOptions || {};
+  const res = await fetch(csvPath, fetchOpts);
   const text = await res.text();
-  const lines = text.trim().split("\n");
+  const lines = text.trim().split(/\r?\n/);
   if (!lines.length) return [];
 
-  const headers = smartSplit(lines[0]); // ← 安全分割
+  const headers = smartSplit(lines[0]).map(h => unquote(h));
   const idx = {
-    timestamp:     headers.indexOf("timestamp"),
-    temperature:   headers.indexOf("temperature"),
-    condition:     headers.indexOf("condition"),
-    height:        headers.indexOf("height"),
-    speed:         headers.indexOf("speed"),
-    direction:     headers.indexOf("direction"),
-    directionType: headers.indexOf("directionType"),
-    swells:        headers.indexOf("swells"),
+    timestamp:     headers.findIndex(h => /timestamp/i.test(h)),
+    temperature:   headers.findIndex(h => /temperature|temp/i.test(h)),
+    condition:     headers.findIndex(h => /condition|weather/i.test(h)),
+    tideHeight:    headers.findIndex(h => /height|tide/i.test(h)),   // 潮位（height列想定）
+    windSpeedKph:  headers.findIndex(h => /speed|wind.*kph|windSpeed/i.test(h)),
+    windAngle:     headers.findIndex(h => /direction(?!Type)/i.test(h)),
+    directionType: headers.findIndex(h => /directionType/i.test(h)),
+    swells:        headers.findIndex(h => /swells/i.test(h)),
   };
-  if (idx.timestamp === -1) { console.error("timestamp カラムが見つかりません"); return []; }
+  if (idx.timestamp === -1) {
+    console.error("timestamp カラムが見つかりません");
+    return [];
+  }
 
   const rows = [];
-  for (const line of lines.slice(1)) {
-    if (!line.trim()) continue;
-    const cols = smartSplit(line);
-    const rawTs = cols[idx.timestamp]?.trim?.();
-    if (!rawTs) continue;
+  for (const rawLine of lines.slice(1)) {
+    if (!rawLine.trim()) continue;
+    const cols = smartSplit(rawLine).map(unquote);
 
-    // JSTとしてパース → UTCのDate
-    const ts = parseTimestampAsJST(rawTs);
-    if (!isWithinTargetWindow(ts)) continue; // ★ ここだけ差し替え（固定 or 48h）
+    const tsStr = cols[idx.timestamp];
+    if (!tsStr) continue;
 
-    const [dateStr, timeStr = "00:00:00"] = rawTs.split(" ");
+    // JST文字列としてパース → UTC Date
+    const ts = parseTimestampAsJST(tsStr);
+    if (!Number.isFinite(ts.getTime())) continue;
 
-    const obj = {
-      temperature:   idx.temperature   >= 0 ? cols[idx.temperature]   : "",
-      condition:     idx.condition     >= 0 ? cols[idx.condition]     : "",
-      height:        idx.height        >= 0 ? cols[idx.height]        : "",
-      speed:         idx.speed         >= 0 ? cols[idx.speed]         : "",
-      direction:     idx.direction     >= 0 ? cols[idx.direction]     : "",
-      directionType: idx.directionType >= 0 ? cols[idx.directionType] : "",
-      swells:        idx.swells        >= 0 ? cols[idx.swells]        : "",
-    };
+    // オプションのウィンドウに収まる行だけ採用（既定は“無条件で採用”）
+    if (!inWindow(ts, options.window)) continue;
 
-    // swells 最大height 抽出
-    let maxSwellHeight = 0;
-    const swellsRaw = obj.swells?.trim?.();
-    if (swellsRaw) {
-      const heightMatches = [...swellsRaw.matchAll(/["']?height["']?\s*:\s*([0-9]*\.?[0-9]+)/g)]
-        .map(m => parseFloat(m[1])).filter(n => Number.isFinite(n));
-      if (heightMatches.length) maxSwellHeight = Math.max(...heightMatches);
-    }
+    const [dateStr, timeStr = "00:00:00"] = String(tsStr).split(" ");
+    const hour = parseInt(timeStr.split(":")[0] || "0", 10);
 
-    // 風速 KPH→m/s（小数1桁、四捨五入）
+    // 風速（KPH→m/s）
     const windMps = (() => {
-      const kph = parseFloat(obj.speed);
-      if (Number.isFinite(kph)) return Math.round((kph / 3.6) * 10) / 10;
+      const kphRaw = idx.windSpeedKph >= 0 ? parseFloat(cols[idx.windSpeedKph]) : NaN;
+      if (Number.isFinite(kphRaw)) return Math.round((kphRaw / 3.6) * 10) / 10;
       return 0;
     })();
 
-    // 気温 小数1桁（四捨五入）
     const temp = (() => {
-      const t = parseFloat(obj.temperature);
-      if (Number.isFinite(t)) return Math.round(t * 10) / 10;
-      return 0;
+      const t = idx.temperature >= 0 ? parseFloat(cols[idx.temperature]) : NaN;
+      return Number.isFinite(t) ? Math.round(t * 10) / 10 : 0;
     })();
 
-    // 潮汐 数値化
     const tide = (() => {
-      const h = parseFloat(obj.height);
+      const h = idx.tideHeight >= 0 ? parseFloat(cols[idx.tideHeight]) : NaN;
       return Number.isFinite(h) ? h : 0;
     })();
 
-    const hour = parseInt((timeStr || "00:00:00").split(":")[0], 10);
+    const weatherIcon = idx.condition >= 0 ? (cols[idx.condition] || "").trim() : "";
 
-    const waveHeightRaw = Number.isFinite(maxSwellHeight) ? maxSwellHeight : 0;
-    const waveHeightDisplay = floorTo1(waveHeightRaw);
-
-    const swells = parseSwellsField(obj.swells)
+    // Swells
+    const swellsArr = parseSwellsField(idx.swells >= 0 ? cols[idx.swells] : "");
+    const swells = swellsArr
       .filter(s => (+s?.height || 0) > 0)
       .map(s => ({
         height: +s.height || 0,
@@ -167,23 +169,42 @@ export async function loadSurfData(csvPath) {
         direction: +s.direction || 0,
       }));
 
+    // 波高：swellsの最大height（メートル）を採用
+    const maxSwellHeight = swells.length ? Math.max(...swells.map(s => +s.height || 0)) : 0;
+    const waveHeight = Number.isFinite(maxSwellHeight) ? maxSwellHeight : 0;
+
     rows.push({
       hour,
-      waveHeight: waveHeightRaw,
-      waveHeightDisplay,
+      waveHeight,
+      waveHeightDisplay: floorTo1(waveHeight),
       tide,
       windSpeed: windMps,
-      windAngle: parseFloat(obj.direction) || 0,
-      windDirectionType: obj.directionType?.trim?.() || "",
+      windAngle: idx.windAngle >= 0 ? (parseFloat(cols[idx.windAngle]) || 0) : 0,
+      windDirectionType: idx.directionType >= 0 ? (cols[idx.directionType] || "").trim() : "",
       temp,
-      weatherIcon: obj.condition?.trim?.() || "",
+      weatherIcon,
       swells,
-      timestamp: ts.toISOString(),
+      timestamp: ts.toISOString(), // UTC ISO
       dateStr,
       timeStr,
     });
   }
 
+  // 時刻順に整列（昇順）
   rows.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
   return rows;
 }
+
+/* ============== 使い方メモ（呼び出し側・例） =================
+import { loadSurfData } from './js/dataLoader_kitaizumi.js';
+
+// 既定は“フル期間”を返す（chart_kitaizumi.html が48hのUIロックを適用）
+const data = await loadSurfData(csvPath, { fetchOptions:{ cache:'no-store' } });
+
+// もしローダ側で範囲を絞りたい場合（任意・使わなくてOK）:
+// A) 今日JST 0:00 から 48時間だけ:
+await loadSurfData(csvPath, { window:{ windowHours:48 } });
+// B) 固定のJSTウィンドウ:
+await loadSurfData(csvPath, { window:{ fixedWindowJST:{ startJST:{y:2025,m:10,d:7}, endJST:{y:2025,m:10,d:9} } } });
+============================================================== */

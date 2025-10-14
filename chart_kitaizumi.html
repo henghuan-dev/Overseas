@@ -2,452 +2,307 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <!-- 内部キャンバスを1000pxで固定 -->
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>波情報グラフ（iframe用）</title>
-
-  <!-- ★ このページ専用の最小CSS（横幅1000px固定） -->
   <style>
-    :root{
-      --maxw: 1700px;      /* 全体の最大幅 */
-      --pad:  16px;        /* 左右パディング */
-      --hour-w: clamp(26px, 10vw, 50px); /* 1時間のセル幅（端末に応じて可変） */
+  :root{
+    --maxw:1700px; --pad:16px; --line:#e5e7eb;
+    --accent:#0ea5e9; --ink:#333;
 
-      /* タイトル幅 & 行の高さ（可変） */
-      --title-w: clamp(110px, 22vw, 150px);
-      --track-h: clamp(50px, 8vw, 70px);
-      --waveTide-h: clamp(140px, 24vw, 180px);
-      --tideLine-h: clamp(100px, 20vw, 140px);
-    }
-    *{ box-sizing: border-box; }
-    html,body{ margin:0; padding:0; }
-    body{
-      background:#fff;
-      color:#333;
-      font-family: "Helvetica Neue", Arial, "Noto Sans JP", sans-serif;
-      max-width: var(--maxw);
-      width: 100%;
-      margin: 0 auto;
-      padding: 0 var(--pad);
-      overflow-x:hidden;   /* 横はみ出し防止 */
-    }
+    /* ====== タイムライン見出しの“上に置く”ための余白 ====== */
+    --timeline-header-space: 28px;   /* .chart-inner の上パディング */
 
-    /* ====== ベース ====== */
-.chart-block {
-  position: relative;
-  font-family: "Helvetica Neue", Arial, sans-serif;
-}
-
-.chart-scroll-container {
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  width: 100%;
-  padding-bottom: 10px;
-  position: relative;
-}
-
-.chart-inner {
-  display: block;
-  position: relative;
-}
-
-/* overlayCanvas */
-#overlayCanvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: auto;
-  z-index: 10;
-}
-/* 折れ線グラフ（スマホ対応） */
-@media (max-width: 768px) {
-  .tide-only .canvas-wrapper {
-    overflow: visible;        /* 線や円が切れないように */
-    position: relative;
-  }
-  #tideLineCanvas {
-    height: 160px !important; /* ← 数値はお好みで 120–180 */
-    display: block;
-    position: relative;
-    z-index: 1;
+    /* ====== マスク調整トークン（上下グラデ＋微ノイズ） ====== */
+    --mask-top-opacity: .75;
+    --mask-mid-opacity: .60;
+    --mask-btm-opacity: .60;
+    --mask-fade-left: 14px;     /* 左端ソフトフェード幅 */
+    --mask-blur: 6px;           /* 上側の軽いブラー量（0で無効） */
+    --mask-noise-alpha: .07;    /* 微細ノイズ透明度（0で無効） */
+    --mask-noise-size: 1px;     /* 微細ノイズ間隔 */
   }
 
-  /* グラフ領域が隠れないように */
-  .chart-scroll-container {
-    overflow-x: auto;
-    overflow-y: visible;
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:#fff;color:var(--ink);
+    font-family:"Helvetica Neue",Arial,"Noto Sans JP",sans-serif;
+    max-width:var(--maxw);width:100%;margin:0 auto;padding:0 var(--pad);
+    overflow-x:hidden;
   }
-}
 
+  .chart-block{position:relative}
+  .chart-scroll-container{
+    overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    width:100%;padding-bottom:10px;position:relative;
+  }
 
-/* ====== 共通ブロック ====== */
-.forecast-block {
-  background: transparent;
-  padding: 6px 0;
-  position: relative;
-  background: linear-gradient(to bottom, #e5f6ff, #f0fbf9);
-}
+  /* ★ 見出し用に上方向の余白を確保（JS が読み取る） */
+  .chart-inner{display:block;position:relative;padding-top:var(--timeline-header-space);}
 
-.block-title {
-  font-size: 13px;
-  font-weight: bold;
-  margin-bottom: 4px;
-  color: #333;
-  position: sticky;
-  left: 0;
-  z-index: 10;
-  width: 140px; /* 固定幅を設定 */
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-}
+  #overlayCanvas{position:absolute;top:0;left:0;pointer-events:auto;z-index:10}
 
-.canvas-wrapper {
-  overflow: hidden;
-}
+  .forecast-block{background:linear-gradient(to bottom,#e5f6ff,#f0fbf9);padding:6px 0;position:relative}
+  .block-title{font-size:13px;font-weight:bold;margin-bottom:4px;color:#333;position:sticky;left:0;z-index:10;width:140px;display:flex;align-items:center}
+  .canvas-wrapper{overflow:hidden;position:relative} /* 波高マスクの親 */
+  .forecast-block canvas{display:block;height:60px}
 
-.forecast-block canvas {
-  display: block;
-  height: 60px;
-}
-
-/* ====== タイムライン ====== */
-/* タイムライン上の Today ピル */
-.timeline-header{
-  position: absolute;     /* ← 必須 */
-  left: 8px;
-  right: auto;            /* ← 念のため right を無効化 */
-  max-width: calc(100% - 16px); /* 端末幅から左右余白を差し引く */
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
-
-  /* 既存の黒半透明デザイン */
-  background: rgba(0,0,0,0.3);
-  color: #fff;
-  backdrop-filter: blur(4px);
-  border: 1px solid rgba(255,255,255,0.14);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 12px;
-  line-height: 1.6;
-  pointer-events: none;
-}
-
-@media (max-width: 768px){
   .timeline-header{
-    font-size: 14px;
-    padding: 2px 8px;
+    position:absolute;left:8px;max-width:calc(100% - 16px);
+    white-space:nowrap;text-overflow:ellipsis;overflow:hidden;
+    background:rgba(0,0,0,.3);color:#fff;backdrop-filter:blur(4px);
+    border:1px solid rgba(255,255,255,.14);box-shadow:0 4px 12px rgba(0,0,0,.25);
+    border-radius:999px;padding:3px 10px;font-size:12px;line-height:1.6;pointer-events:none;
+    /* JS が top を再配置します。ここは初期値（保険） */
+    top:4px;
   }
-}
-.time-axis {
-  display: flex;
-  overflow-x: auto;
-  border-radius: 6px;
-  margin: 12px 0;
-  border: 1px solid rgba(0,0,0,0.05);
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.time-axis::-webkit-scrollbar {
-  display: none;
-}
 
-.time-labels {
-  display: flex;
-  min-width: max-content;
-  width: calc(50px * 24); /* 24時間分のラベルに対応 */
-}
+  .time-axis{display:flex;overflow-x:auto;border-radius:6px;margin:12px 0;border:1px solid rgba(0,0,0,.05);scrollbar-width:none;-ms-overflow-style:none}
+  .time-axis::-webkit-scrollbar{display:none}
+  .time-labels{display:flex;min-width:max-content}
+  .time-labels>div{flex:0 0 50px;width:50px;text-align:center;font-size:10px}
+  .time-labels .current{background:rgba(0,191,255,.2);font-weight:bold;box-shadow:inset 0 -2px 0 #00bfff}
+  #timeLabels.time-labels>div>div{line-height:12px;font-size:11px}
+  :root{--timeline-pill-bg:#e0e0e0;--timeline-pill-fg:#222}
+  #timeLabels .date-pill.is-visible{padding:0 4px;border-radius:4px;background:var(--timeline-pill-bg);color:var(--timeline-pill-fg);font-weight:700}
+  #timeLabels .hour-label.is-zero-hour{padding:0 4px;border-radius:4px;background:var(--timeline-pill-bg);color:var(--timeline-pill-fg);font-weight:700}
 
-.time-labels > div {
-  flex: 0 0 50px;
-  width: 50px;
-  text-align: center;
-  font-size: 10px;
-  padding: 0;
-  transition: background 0.3s;
-  box-sizing: border-box;
-}
+  .overlay-highlight{background-color:rgba(0,191,255,.15)}
+  .overlay-line{border-left:2px solid rgba(0,191,255,.9)}
 
-/* 昼と夜の色分け */
-.time-labels div.day {
-  background: rgba(255, 215, 0, 0.12);
-  color: #444;
-}
-
-.time-labels div.night {
-  background: rgba(25, 25, 112, 0.12);
-  color: #222;
-}
-
-/* 現在時刻 */
-.time-labels .current {
-  background: rgba(0, 191, 255, 0.2);
-  font-weight: bold;
-  box-shadow: inset 0 -2px 0 #00bfff;
-}
-#timeLabels.time-labels > div > div{
-  margin: 0;
-  padding: 0 !important; /* 子孫指定の残りを殺す */
-  line-height: 12px;     /* 10〜12で調整、数字だけなら11–12が見やすい */
-  font-size: 11px;       /* 9〜11で調整 */
-}
-/* ===== タイムライン配色（ライトグレー＋太字） ===== */
-:root{
-  --timeline-pill-bg: #e0e0e0;   /* ライトグレー */
-  --timeline-pill-fg: #222;      /* 文字は濃いめ */
-}
-
-/* 日付：00の上だけ表示して塗りつぶし */
-#timeLabels .date-pill.is-visible{
-  padding: 0 4px;
-  border-radius: 4px;
-  background: var(--timeline-pill-bg);
-  color: var(--timeline-pill-fg);
-  font-weight: 700;   /* 太字 */
-}
-
-/* 時刻：00だけ塗りつぶし */
-#timeLabels .hour-label.is-zero-hour{
-  padding: 0 4px;
-  border-radius: 4px;
-  background: var(--timeline-pill-bg);
-  color: var(--timeline-pill-fg);
-  font-weight: 700;   /* 太字 */
-}
-
-/* ====== Overlay（Surfline風） ====== */
-.overlay-highlight {
-  background-color: rgba(0, 191, 255, 0.15);
-}
-.overlay-line {
-  border-left: 2px solid rgba(0, 191, 255, 0.9);
-}
-
-/* ====== Tooltip ====== */
-#tooltip {
-  position: absolute;
-  background: rgba(0, 0, 0, 0.85);
-  color: #fff;
-  padding: 8px 10px;
-  border-radius: 4px;
-  font-size: 13px;
-  line-height: 1.4;
-  pointer-events: none;
-  z-index: 20;
-  display: none;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  animation: fadeIn 0.15s ease-in-out;
-  max-width: 180px;
-}
-#tooltip strong {
-  display: block;
-  font-size: 15px;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid rgba(255,255,255,0.2);
-  color: #2a7d9eff;
-}
-#tooltip span.label {
-  display: inline-block;
-  min-width: 50px;
-  font-weight: bold;
-  color: #ccc;
-}
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* ====== 波高＋潮汐 ====== */
-.wave-tide canvas {
-  background: transparent;
-}
-.wave-tide .block-title {
-  color: #2a7d9eff;
-  border-left: 4px solid #2a7d9eff;
-  padding-left: 6px;
-}
-#waveValueCanvas {
-  height: 28px;   /* 数値の1行分だけ */
-  display: block;
-}
-
-#waveTideCanvas {
-  height: 150px;  /* 棒＋潮汐の描画エリア */
-  display: block;
-}
-/* 潮汐（折れ線のみ） */
-.tide-only canvas { background: transparent; }
-.tide-only .block-title {
-  color: #2a7d9e;
-  border-left: 4px solid #2a7d9e;
-  padding-left: 6px;
-}
-#tideLineCanvas { height: 120px; display: block; }
-
-/* ====== 風速＋風向 ====== */
-.wind-combo canvas {
-  background: transparent;
-}
-.wind-combo .block-title {
-  color: #2a7d9eff;
-  border-left: 4px solid #2a7d9eff;
-  padding-left: 6px;
-}
-
-/* ====== 気温 ====== */
-.temperature canvas {
-  background: transparent;
-}
-.temperature .block-title {
-  color: #2a7d9eff;
-  border-left: 4px solid #2a7d9eff;
-  padding-left: 6px;
-}
-
-/* ====== PC ====== */
-@media (min-width: 1025px) {
-  .chart-inner {
-    width: 100%;
+  #tooltip{
+    position:absolute;background:rgba(0,0,0,.85);color:#fff;padding:8px 10px;border-radius:4px;
+    font-size:13px;line-height:1.4;pointer-events:none;z-index:20;display:none;
+    box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:180px;transform: translateY(-20px);
+    will-change: left, top, transform;
   }
-  .forecast-block { padding: 10px 0; }
-  .block-title { 
-    font-size: 14px; 
-    width: 150px; /* PC用の幅調整 */
+
+  .wave-tide .block-title{color:#2a7d9eff;border-left:4px solid #2a7d9eff;padding-left:6px}
+  #waveValueCanvas{height:28px}
+  #waveTideCanvas{height:150px}
+
+  .tide-only .block-title{color:#2a7d9e;border-left:4px solid #2a7d9e;padding-left:6px}
+  #tideLineCanvas{height:120px}
+
+  .wind-combo .block-title{color:#2a7d9eff;border-left:4px solid #2a7d9eff;padding-left:6px}
+
+  /* ===== 波高だけ：3日目以降 “上：不透明 / 下：半透明” マスク ===== */
+  .wave-mask{
+    position:absolute;
+    /* 横幅と left/top/height は JS が設定します */
+    width:0%; display:none; z-index:300;
+    pointer-events:auto;                      /* 背後のホバーは遮断 */
+    border-left:1px dashed var(--line);
+
+    /* 縦グラデ＋微細ノイズ（見せ方の本体） */
+    background-image:
+      linear-gradient(to bottom,
+        rgba(255,255,255,var(--mask-top-opacity))  5%,
+        rgba(255,255,255,var(--mask-mid-opacity)) 60%,
+        rgba(255,255,255,var(--mask-btm-opacity)) 100%
+      ),
+      radial-gradient(circle at 1px 1px,
+        rgba(0,0,0,var(--mask-noise-alpha)) 1px,
+        rgba(0,0,0,0) 1px);
+    background-size: auto, var(--mask-noise-size) var(--mask-noise-size);
+    background-repeat: no-repeat, repeat;
+
+    /* 左端をソフトに馴染ませる（横方向） */
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--mask-fade-left), #000 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 var(--mask-fade-left), #000 100%);
+
+    /* 本体にはフィルタを掛けない（下部の見え方を確保） */
+    -webkit-backdrop-filter: none;
+            backdrop-filter: none;
+
+    will-change: left, width, top, height;
   }
-  .forecast-block canvas { height: 70px; }
-  .time-labels { font-size: 11px; }
-}
 
-/* ====== タブレット ====== */
-@media (max-width: 1024px) and (min-width: 769px) {
-  .forecast-block { padding: 8px 0; }
-  .block-title { 
-    font-size: 14px;
-    width: 145px; /* タブレット用の幅調整 */
+  /* 上側だけにごく弱いブラーと白ベールを重ねる（下部はクリア） */
+  .wave-mask::after{
+    content:"";
+    position:absolute;
+    inset:0 0 var(--mask-clear-bottom, 18%) 0; /* 下から何%を“フィルタ無し”にするか */
+    pointer-events:none;
+
+    background: linear-gradient(to bottom,
+                rgba(255,255,255, var(--mask-top-opacity)) 0%,
+                rgba(255,255,255, .35) 60%,
+                rgba(255,255,255, 0) 100%);
+
+    -webkit-backdrop-filter: blur(var(--mask-blur)) contrast(.95) saturate(.95) brightness(.98);
+            backdrop-filter: blur(var(--mask-blur)) contrast(.95) saturate(.95) brightness(.98);
+
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--mask-fade-left), #000 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 var(--mask-fade-left), #000 100%);
   }
-  .forecast-block canvas { height: 60px; }
-}
 
-/* ====== スマホ ====== */
-@media (max-width: 768px) {
-  .forecast-block {
-    padding: 6px 8px;
-    margin-bottom: 10px;
+  /* mask-image 非対応フォールバック（左端のみ） */
+  @supports not ((-webkit-mask-image: linear-gradient(#000,#000)) or (mask-image: linear-gradient(#000,#000))){
+    .wave-mask::before{
+      content:""; position:absolute; inset:0;
+      background:linear-gradient(90deg, rgba(255,255,255,0) 0, rgba(255,255,255,.85) var(--mask-fade-left), rgba(255,255,255,0) 0);
+      pointer-events:none;
+    }
   }
-  .block-title {
-    margin-bottom: 4px;
-    font-size: 13px;
-    width: 120px; /* スマホ用の幅 */
-    position: sticky;
-    left: 0; /* 横スクロール時の固定位置 */
-    z-index: 10;
-    padding: 4px 0;
+
+  /* 画面固定の案内カード（最前面へ） */
+  .lock__card--fixed{
+    position:fixed;
+    z-index:850;              /* ← 310 から引き上げ */
+    display:none;
+    max-width:min(560px, 92vw);
+    background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px 16px;
+    box-shadow:0 10px 30px rgba(0,0,0,.12);
+    pointer-events:auto;
   }
-  .forecast-block canvas { height: 55px; }
-  .time-axis { padding: 5px; }
-  .time-labels { font-size: 9px; }
-}
+  .lock__card--fixed .title{font-size:15px;font-weight:800;margin:0 0 6px}
+  .lock__card--fixed .desc{font-size:13px;color:#444;margin:0 0 10px;line-height:1.6}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;font-size:13px;font-weight:700;border-radius:999px;text-decoration:none;border:1px solid var(--accent);background:var(--accent);color:#fff}
 
-/* ====== 極小端末 ====== */
-@media (max-width: 480px) {
-  .forecast-block { padding: 5px 6px; }
-  .block-title { font-size: 12px; }
-  .forecast-block canvas { height: 50px; }
-  .time-labels { font-size: 8px; }
-}
+  /* 画面外クランプ時の方向フラグ（任意） */
+  .lock__card--fixed[data-offscreen="left"]::before,
+  .lock__card--fixed[data-offscreen="right"]::before{
+    content:"";
+    position:absolute; top:8px;
+    width:10px; height:10px;
+    border-top:2px solid currentColor;
+    border-left:2px solid currentColor;
+    opacity:.6;
+  }
+  .lock__card--fixed[data-offscreen="left"]::before{
+    left:-6px; transform:rotate(-45deg);
+  }
+  .lock__card--fixed[data-offscreen="right"]::before{
+    right:-6px; transform:rotate(135deg);
+  }
+
+  @media (max-width:768px){
+    .forecast-block{padding:6px 8px;margin-bottom:10px}
+    .block-title{margin-bottom:4px;font-size:13px;width:120px;position:sticky;left:0;z-index:10;padding:4px 0}
+    #tideLineCanvas{height:160px!important}
+  }
+</style>
 
 
-
-  </style>
 </head>
 <body>
-  <!-- ===== グラフ本体 ===== -->
   <div class="chart-block">
-    <div class="chart-scroll-container">
-      <div class="chart-inner">
-        <!-- 時間軸 -->
+    <div class="chart-scroll-container" id="scrollX">
+      <div class="chart-inner" id="chartInner">
         <div class="time-axis">
           <div id="timeLabels" class="time-labels"></div>
         </div>
 
-        <!-- 波高（数値）＋ 波高×潮汐（棒＋折れ線） -->
-        <section class="forecast-block wave-tide">
+        <!-- 波高 -->
+        <section class="forecast-block wave-tide" id="waveBlock">
           <h3 class="block-title">波高 (m)</h3>
-          <div class="canvas-wrapper">
+          <div class="canvas-wrapper" id="waveWrapper">
             <canvas id="waveValueCanvas"></canvas>
             <canvas id="waveTideCanvas"></canvas>
+            <!-- ★ 3日目以降の“右側”を覆い、内部は「上=不透明 / 下=半透明」 -->
+            <div class="wave-mask" id="waveMask"></div>
           </div>
         </section>
 
-        <!-- 風速・風向 -->
+        <!-- 風 -->
         <section class="forecast-block wind-combo">
           <h3 class="block-title">風速 (m/s) &amp; 風向</h3>
-          <div class="canvas-wrapper">
-            <canvas id="windCanvas"></canvas>
-          </div>
+          <div class="canvas-wrapper"><canvas id="windCanvas"></canvas></div>
         </section>
 
-        <!-- 潮汐のみ -->
+        <!-- 潮汐 -->
         <section class="forecast-block tide-only">
           <h3 class="block-title">潮汐 (m)</h3>
-          <div class="canvas-wrapper">
-            <canvas id="tideLineCanvas"></canvas>
-          </div>
+          <div class="canvas-wrapper"><canvas id="tideLineCanvas"></canvas></div>
         </section>
 
-        <!-- ポインタ・ハイライト等のオーバレイ -->
+        <!-- オーバーレイ（ガイド／日付バッジ） -->
         <canvas id="overlayCanvas"></canvas>
       </div>
     </div>
     <div id="tooltip"></div>
   </div>
 
-  <!-- ===== 既存の描画ロジックを利用（プロジェクトのJSをそのまま使う） =====
-       ※ 同じディレクトリに dataLoader.js / draw.js がある前提
-  -->
+  <!-- 画面固定の案内カード（波高上に被せ／ボタンあり） -->
+  <div class="lock__card--fixed" id="lockCardFixed" aria-live="polite">
+    <p class="title">この先のデータは有料会員限定です</p>
+    <p class="desc">無料プランでは直近<strong>2日間</strong>の波高グラフのみ表示されます。</p>
+    <div><a class="btn" href="https://liff.namiaru.com/mypage.html">マイページへ</a></div>
+  </div>
+
   <script type="module">
     import { loadSurfData } from './js/dataLoader_kitaizumi.js';
-    import { setData, drawAllCharts } from './js/draw_kitaizumi.js?v=0.2';
+    import { setData, drawAllCharts } from './js/draw_kitaizumi.js?v=0.3';
 
-    /** クエリ文字列を取得 ?csv=... */
-    function getCsvFromQuery(defaultPath) {
-      const params = new URLSearchParams(location.search);
-      const p = params.get('csv');
-      return p ? decodeURIComponent(p) : defaultPath;
+    const params = new URLSearchParams(location.search);
+    const pay    = Number.isFinite(Number(params.get('paystatus'))) ? Number(params.get('paystatus')) : 1;
+    const spotId = params.get('spotId') || params.get('spotid') || '';
+    const csvArg = params.get('csv');
+    const isPaid = pay >= 4;
+
+    const HOURS_MASK_START = 48;      // 3日目開始（2日＝48h）
+    const HOURS_FULL       = 17 * 24; // 408h（描画はフル）
+
+    window.PAY_MODE = isPaid ? 'paid' : 'free';
+    window.CHART_RANGE_HOURS = HOURS_FULL; // 描画はフル、UIで波高のみマスク
+
+    async function resolveCsvPath(){
+      if (csvArg) return decodeURIComponent(csvArg);
+      if (!spotId) return './data/640a772f606c45654dbda6fd.csv';
+      try{
+        const res  = await fetch('./data/points.json', { cache:'no-store' });
+        const list = await res.json();
+        const hit  = list.find(x => String(x.spotid) === String(spotId));
+        if (!hit) return `./renew/data/${spotId}.csv`;
+        return hit.dataCsv || hit.csv || `./renew/data/${spotId}.csv`;
+      }catch{ return `./renew/data/${spotId}.csv`; }
     }
 
-    async function initChart() {
-      // 既定CSV（必要に応じて任意のスポットCSVに変更）
-      const defaultCsv = './data/584204204e65fad6a7709704.csv'; // 鵠沼4k（例）
-      const csvPath = getCsvFromQuery(defaultCsv);
-
-      try {
-        const data = await loadSurfData(csvPath, { fetchOptions: { cache: 'no-store' }});
-        setData(data);
-        drawAllCharts(); // 既存の draw.js が #id を参照して描画
-        // オーバレイキャンバスの幅・高さを親に合わせる（簡易調整）
-        syncOverlaySize();
-        window.addEventListener('resize', syncOverlaySize);
-      } catch (err) {
-        console.error('CSV読み込み失敗:', csvPath, err);
+    // 3日目以降の“右側”を波高レイヤにだけマスク + 固定カードをマスク開始位置に配置
+    function applyWaveMask(){
+      const mask = document.getElementById('waveMask');
+      const card = document.getElementById('lockCardFixed');
+      if (!mask || !card) return;
+      if (isPaid){
+        mask.style.display = 'none';
+        card.style.display = 'none';
+      }else{
+        // 位置は draw_kitaizumi.js 側 measureAndSize() で決まる
+        mask.style.display = 'block';
+        card.style.display = 'block';
       }
     }
 
-    function syncOverlaySize() {
+    function clamp(v, min, max){ return Math.max(min, Math.min(v, max)); }
+
+
+    function syncOverlaySize(){
       const overlay = document.getElementById('overlayCanvas');
-      const inner   = document.querySelector('.chart-inner');
+      const inner   = document.getElementById('chartInner');
       if (!overlay || !inner) return;
       const rect = inner.getBoundingClientRect();
-      overlay.width  = Math.ceil(rect.width);
-      // 全体の高さ（時間軸 + ブロック群）をざっくり取得
-      const totalH = inner.scrollHeight;
-      overlay.height = Math.ceil(totalH);
-      overlay.style.width  = rect.width + 'px';
-      overlay.style.height = totalH + 'px';
+      overlay.width = Math.ceil(rect.width);
+      overlay.height = Math.ceil(inner.scrollHeight);
+      overlay.style.width = rect.width + 'px';
+      overlay.style.height = inner.scrollHeight + 'px';
+    }
+
+    async function initChart(){
+      const csvPath = await resolveCsvPath();
+      try{
+        const data = await loadSurfData(csvPath, { fetchOptions:{ cache:'no-store' }});
+        setData(data);
+        drawAllCharts();
+        syncOverlaySize();
+        applyWaveMask();
+
+        // リサイズでのみ再配置（横スクロールでは固定）
+        window.addEventListener('resize', () => {
+          syncOverlaySize();
+          applyWaveMask();
+        });
+      }catch(e){ console.error('CSV読み込み失敗:', csvPath, e); }
     }
 
     initChart();

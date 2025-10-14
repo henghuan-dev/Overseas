@@ -179,6 +179,10 @@ body::after{
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: 0 8px 20px rgba(0,0,0,.35);
+  overflow-y: hidden;       /* 念のため縦は隠す */
+  -ms-overflow-style: none; /* IE/旧Edge */
+  scrollbar-width: none;    /* Firefox */
+  -webkit-scrollbar{ display: none; }
 }
 .country-scroll{ display: flex; gap: 10px; padding: 8px 12px; min-width: max-content; }
 .country-pill{
@@ -599,7 +603,7 @@ body::after{
 #chart-pc{
   display:block;
   width:100%;
-  height: clamp(560px, 75vh, 900px);
+  height: clamp(880px, 100vh, 1700px);
   border:0;
 }
 

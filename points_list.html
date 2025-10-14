@@ -27,7 +27,7 @@
   <!-- ★ 追加：グラフ出し分け用の最小CSS -->
   <style>
     :root{
-      --embed-h-pc: clamp(560px, 75vh, 900px); /* PC側の高さ */
+      --embed-h-pc: 690px; /* PC側の高さ */
       --embed-h-sp: 520px;                     /* SP側の高さ（適宜調整） */
       --surfline-h: clamp(420px, 60vh, 800px); /* Surfline 埋め込み高さ */
     }
@@ -148,7 +148,7 @@
         <iframe
           id="chart-pc"
           title="ポイントチャート（PC）"
-          src="../chart_kitaizumi.html"
+          src="../chart_kitaizumi.html?paystatus=2"
           loading="lazy"
           allowfullscreen
         ></iframe>
@@ -200,6 +200,6 @@
   </script>
 
   <!-- アプリJS（points_list 用） -->
-  <script type="module" src="js/list.js?v=0.1"></script>
+  <script type="module" src="js/list.js?v=0.3"></script>
 </body>
 </html>
